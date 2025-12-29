@@ -27,11 +27,7 @@ class MyAppCrewClient {
         mergedHeaders.addAll(headers);
       }
       final response = await _client
-          .post(
-            Uri.parse(url),
-            headers: mergedHeaders,
-            body: jsonEncode(body),
-          )
+          .post(Uri.parse(url), headers: mergedHeaders, body: jsonEncode(body))
           .timeout(timeout);
       final rawBody = response.body;
       final json = safeJsonDecode(rawBody);

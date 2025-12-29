@@ -2,6 +2,12 @@
 
 A tiny Flutter SDK to bootstrap tester sessions, queue events, auto-track screens, and flush batches safely.
 
+## Install (pub.dev)
+
+```sh
+flutter pub add myappcrew_flutter
+```
+
 ## Install (path dependency)
 
 Option A: path dependency
@@ -12,32 +18,50 @@ dependencies:
     path: ../myappcrew_flutter_sdk/packages/myappcrew_flutter
 ```
 
-## Initialize
+## Minimal usage
 
 ```dart
-final result = await MyAppCrew.initialize(
-  publicKey: 'YOUR_PUBLIC_KEY',
-  baseUrl: 'https://api.myappcrew.com',
-);
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  final result = await MyAppCrew.initialize(
+    publicKey: 'YOUR_PUBLIC_KEY',
+    baseUrl: 'https://api.myappcrew.com',
+  );
+
+  runApp(
+    MaterialApp(
+      navigatorObservers: [
+        MyAppCrew.navigatorObserver(),
+      ],
+      home: const MyHomePage(),
+    ),
+  );
+
+  if (result.ok) {
+    MyAppCrew.logEvent('button_click', properties: {
+      'label': 'Subscribe',
+    });
+    await MyAppCrew.flushNow();
+  }
+}
 ```
 
-## Auto screen tracking
+## Configuration via --dart-define
 
-```dart
-MaterialApp(
-  navigatorObservers: [
-    MyAppCrew.navigatorObserver(),
-  ],
-);
+```sh
+flutter run -d <device> \
+  --dart-define=MYAPPCREW_BASE_URL=https://myappcrew-tw.pages.dev \
+  --dart-define=MYAPPCREW_PUBLIC_KEY=com.test_app.test
 ```
 
-## Log events
+## Data sent
 
-```dart
-MyAppCrew.logEvent('button_click', properties: {
-  'label': 'Subscribe',
-});
-```
+- `name`
+- `ts` (seconds)
+- `screen`
+- `sessionId`
+- `properties`
 
 ## Notes
 
@@ -46,3 +70,15 @@ MyAppCrew.logEvent('button_click', properties: {
 - All event timestamps use UNIX seconds (10-digit).
 - Retries use small backoff; no infinite loops.
 - SDK is best-effort and should not crash the host app.
+
+## Example app
+
+An example app is available under `example/`.
+
+```sh
+cd example
+flutter pub get
+flutter run -d <device> \
+  --dart-define=MYAPPCREW_BASE_URL=https://myappcrew-tw.pages.dev \
+  --dart-define=MYAPPCREW_PUBLIC_KEY=com.test_app.test
+```

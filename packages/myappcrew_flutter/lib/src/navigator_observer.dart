@@ -18,9 +18,10 @@ class MyAppCrewNavigatorObserver extends NavigatorObserver {
       return;
     }
     final settingsName = route.settings.name;
-    final name = settingsName == null || settingsName.isEmpty
-        ? unknownRouteNameFallback
-        : settingsName;
+    final name =
+        settingsName == null || settingsName.isEmpty
+            ? unknownRouteNameFallback
+            : settingsName;
     if (_currentScreen == name) {
       return;
     }

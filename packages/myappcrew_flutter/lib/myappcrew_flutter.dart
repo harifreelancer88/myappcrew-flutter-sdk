@@ -265,9 +265,11 @@ class MyAppCrew {
       if (_lifecycleObserver != null) {
         binding.removeObserver(_lifecycleObserver!);
       }
-      _lifecycleObserver = MyAppCrewLifecycleObserver(onBackground: () {
-        unawaited(_flush('lifecycle'));
-      });
+      _lifecycleObserver = MyAppCrewLifecycleObserver(
+        onBackground: () {
+          unawaited(_flush('lifecycle'));
+        },
+      );
       binding.addObserver(_lifecycleObserver!);
     } catch (_) {}
   }
@@ -289,18 +291,21 @@ class MyAppCrew {
 
       final url = '${_config!.baseUrl}/api/v1/mobile/bootstrap';
       final result = await _client!.postJson(url, payload);
-      final token = firstStringKey(
-        result.json,
-        <String>['accessToken', 'access_token', 'token', 'jwt'],
-      );
-      final testerId = firstStringKey(
-        result.json,
-        <String>['testerId', 'tester_id', 'id'],
-      );
-      final ingestUrl = firstStringKey(
-        result.json,
-        <String>['ingestUrl', 'ingest_url'],
-      );
+      final token = firstStringKey(result.json, <String>[
+        'accessToken',
+        'access_token',
+        'token',
+        'jwt',
+      ]);
+      final testerId = firstStringKey(result.json, <String>[
+        'testerId',
+        'tester_id',
+        'id',
+      ]);
+      final ingestUrl = firstStringKey(result.json, <String>[
+        'ingestUrl',
+        'ingest_url',
+      ]);
       if (result.statusCode < 200 || result.statusCode >= 300) {
         _logger?.log('bootstrap failed (${result.statusCode})');
         return false;
@@ -313,14 +318,16 @@ class MyAppCrew {
       _accessToken = token;
       _testerId = testerId;
       _ingestUrl = ingestUrl ?? _defaultIngestPath;
-      await _storage!.saveAuth(MyAppCrewAuth(
-        baseUrl: _config!.baseUrl,
-        publicKey: _config!.publicKey,
-        accessToken: token,
-        testerId: testerId,
-        ingestUrl: _ingestUrl,
-        savedAtSeconds: unixSeconds(),
-      ));
+      await _storage!.saveAuth(
+        MyAppCrewAuth(
+          baseUrl: _config!.baseUrl,
+          publicKey: _config!.publicKey,
+          accessToken: token,
+          testerId: testerId,
+          ingestUrl: _ingestUrl,
+          savedAtSeconds: unixSeconds(),
+        ),
+      );
 
       if (_enableInviteClaim && _config!.inviteCode != null) {
         await _claimInvite(_config!.inviteCode!);
@@ -344,9 +351,7 @@ class MyAppCrew {
       await _client!.postJson(
         url,
         <String, dynamic>{'inviteCode': inviteCode, 'ts': unixSeconds()},
-        headers: <String, String>{
-          'Authorization': 'Bearer $_accessToken',
-        },
+        headers: <String, String>{'Authorization': 'Bearer $_accessToken'},
       );
     } catch (_) {}
   }
@@ -432,9 +437,7 @@ class MyAppCrew {
       final result = await _client!.postJson(
         url,
         <String, dynamic>{'events': batch},
-        headers: <String, String>{
-          'Authorization': 'Bearer $_accessToken',
-        },
+        headers: <String, String>{'Authorization': 'Bearer $_accessToken'},
       );
       if (result.statusCode == 401) {
         return _SendResult.unauthorized;
@@ -449,8 +452,4 @@ class MyAppCrew {
   }
 }
 
-enum _SendResult {
-  success,
-  failed,
-  unauthorized,
-}
+enum _SendResult { success, failed, unauthorized }
