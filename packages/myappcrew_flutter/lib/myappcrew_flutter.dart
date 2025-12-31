@@ -38,6 +38,7 @@ class MyAppCrew {
   static String? _sessionId;
   static String? _currentScreen;
   static String? _ingestUrl;
+  static String? _lastError;
   static bool _isInitialized = false;
   static bool _isFlushing = false;
   static bool _rebootstrapAttempted = false;
@@ -47,8 +48,55 @@ class MyAppCrew {
   /// Returns the current testerId, if available.
   static String? get testerId => _testerId;
 
+  /// Loads the testerId from storage if needed.
+  static Future<String?> getTesterId() async {
+    if (_testerId != null && _testerId!.isNotEmpty) {
+      return _testerId;
+    }
+    try {
+      final storage = _storage ?? MyAppCrewStorage();
+      final auth = await storage.loadAuth();
+      if (auth != null && auth.testerId.isNotEmpty) {
+        _testerId = auth.testerId;
+      }
+    } catch (_) {}
+    return _testerId;
+  }
+
   /// Returns the current sessionId, if available.
   static String? get sessionId => _sessionId;
+
+  /// Returns a safe snapshot of SDK state for debugging.
+  static Future<Map<String, dynamic>> debugSnapshot() async {
+    final publicKey = _config?.publicKey;
+    final testerId = _testerId;
+    final ingestUrl = _ingestUrl;
+
+    return <String, dynamic>{
+      'baseUrl': _config?.baseUrl ?? 'unavailable',
+      'publicKey': publicKey ?? 'unavailable',
+      'testerId': (testerId != null && testerId.isNotEmpty)
+          ? testerId
+          : 'unavailable',
+      'hasToken': _accessToken != null && _accessToken!.isNotEmpty,
+      'ingestUrl': (ingestUrl != null && ingestUrl.isNotEmpty)
+          ? ingestUrl
+          : 'unavailable',
+      'lastError': _lastError,
+    };
+  }
+
+  /// Clears stored auth and in-memory auth state.
+  static Future<void> resetAuth() async {
+    try {
+      final storage = _storage ?? MyAppCrewStorage();
+      await storage.clearAuth();
+    } catch (_) {}
+    _accessToken = null;
+    _testerId = null;
+    _ingestUrl = null;
+    _lastError = null;
+  }
 
   /// Whether initialize has completed successfully.
   static bool get isInitialized => _isInitialized;
@@ -60,6 +108,9 @@ class MyAppCrew {
     String? appVersion,
     String? buildNumber,
     String? inviteCode,
+    String? inviteId,
+    String? nickname,
+    String? email,
     bool debugLogs = true,
     Duration timeout = const Duration(seconds: 8),
     int flushAt = 10,
@@ -79,6 +130,9 @@ class MyAppCrew {
         flushAt: flushAt,
         flushInterval: flushInterval,
         forceRebootstrap: forceRebootstrap,
+        inviteId: inviteId,
+        nickname: nickname,
+        email: email,
       );
       _logger = MyAppCrewLogger(debugLogs);
       _client = MyAppCrewClient(timeout: timeout, logger: _logger!);
@@ -89,7 +143,7 @@ class MyAppCrew {
 
       _logger?.log('initialize start');
       final persisted = await _storage?.loadAuth();
-      if (!forceRebootstrap && _isAuthReusable(persisted)) {
+      if (!_isInviteMode() && !forceRebootstrap && _isAuthReusable(persisted)) {
         _accessToken = persisted?.accessToken;
         _testerId = persisted?.testerId;
         _ingestUrl = persisted?.ingestUrl ?? _defaultIngestPath;
@@ -99,19 +153,24 @@ class MyAppCrew {
         return MyAppCrewInitResult.ok();
       }
 
-      final bootstrapOk = await _bootstrap();
-      if (!bootstrapOk) {
+      final initOk = _isInviteMode() ? await _claim() : await _bootstrap();
+      if (!initOk) {
         _isInitialized = false;
         _startObservers();
+        _lastError = _isInviteMode() ? 'claim_failed' : 'bootstrap_failed';
         _logger?.log('initialize failed');
-        return MyAppCrewInitResult.fail('bootstrap_failed');
+        return MyAppCrewInitResult.fail(
+          _isInviteMode() ? 'claim_failed' : 'bootstrap_failed',
+        );
       }
 
       _isInitialized = true;
+      _lastError = null;
       _startObservers();
       _logger?.log('initialize ok');
       return MyAppCrewInitResult.ok();
     } catch (_) {
+      _lastError = 'initialize_exception';
       _logger?.log('initialize exception');
       return MyAppCrewInitResult.fail('initialize_exception');
     }
@@ -181,6 +240,11 @@ class MyAppCrew {
     return auth.baseUrl == _config!.baseUrl &&
         auth.publicKey == _config!.publicKey &&
         auth.accessToken.isNotEmpty;
+  }
+
+  static bool _isInviteMode() {
+    final inviteId = _config?.inviteId;
+    return inviteId != null && inviteId.trim().isNotEmpty;
   }
 
   static Future<Map<String, dynamic>> _loadAppContext() async {
@@ -307,10 +371,12 @@ class MyAppCrew {
         'ingest_url',
       ]);
       if (result.statusCode < 200 || result.statusCode >= 300) {
+        _lastError = 'bootstrap_failed_${result.statusCode}';
         _logger?.log('bootstrap failed (${result.statusCode})');
         return false;
       }
       if (token == null || testerId == null) {
+        _lastError = 'bootstrap_missing_fields';
         _logger?.log('bootstrap missing fields');
         return false;
       }
@@ -335,8 +401,10 @@ class MyAppCrew {
 
       _logger?.log('using ingestUrl: $_ingestUrl');
       _logger?.log('bootstrap ok');
+      _lastError = null;
       return true;
     } catch (_) {
+      _lastError = 'bootstrap_exception';
       _logger?.log('bootstrap exception');
       return false;
     }
@@ -354,6 +422,86 @@ class MyAppCrew {
         headers: <String, String>{'Authorization': 'Bearer $_accessToken'},
       );
     } catch (_) {}
+  }
+
+  static Future<bool> _claim() async {
+    if (_config == null || _client == null || _storage == null) {
+      return false;
+    }
+    final inviteId = _config!.inviteId?.trim();
+    if (inviteId == null || inviteId.isEmpty) {
+      return false;
+    }
+    try {
+      _logger?.log('claim start');
+      final payload = <String, dynamic>{
+        'inviteId': inviteId,
+        'ts': unixSeconds(),
+        'sdkVersion': _sdkVersion,
+      };
+      if (_appContext.isNotEmpty) {
+        payload.addAll(_appContext);
+      }
+      final nickname = _config!.nickname?.trim();
+      if (nickname != null && nickname.isNotEmpty) {
+        payload['nickname'] = nickname;
+      }
+      final email = _config!.email?.trim();
+      if (email != null && email.isNotEmpty) {
+        payload['email'] = email;
+      }
+
+      final url = '${_config!.baseUrl}/api/v1/mobile/claim';
+      final result = await _client!.postJson(url, payload);
+      final token = firstStringKey(result.json, <String>[
+        'accessToken',
+        'access_token',
+        'token',
+        'jwt',
+      ]);
+      final testerId = firstStringKey(result.json, <String>[
+        'testerId',
+        'tester_id',
+        'id',
+      ]);
+      final ingestUrl = firstStringKey(result.json, <String>[
+        'ingestUrl',
+        'ingest_url',
+      ]);
+      if (result.statusCode < 200 || result.statusCode >= 300) {
+        _lastError = 'claim_failed_${result.statusCode}';
+        _logger?.log('claim failed (${result.statusCode})');
+        return false;
+      }
+      if (token == null || testerId == null) {
+        _lastError = 'claim_missing_fields';
+        _logger?.log('claim missing fields');
+        return false;
+      }
+
+      _accessToken = token;
+      _testerId = testerId;
+      _ingestUrl = ingestUrl ?? _defaultIngestPath;
+      await _storage!.saveAuth(
+        MyAppCrewAuth(
+          baseUrl: _config!.baseUrl,
+          publicKey: _config!.publicKey,
+          accessToken: token,
+          testerId: testerId,
+          ingestUrl: _ingestUrl,
+          savedAtSeconds: unixSeconds(),
+        ),
+      );
+
+      _logger?.log('using ingestUrl: $_ingestUrl');
+      _logger?.log('claim ok');
+      _lastError = null;
+      return true;
+    } catch (_) {
+      _lastError = 'claim_exception';
+      _logger?.log('claim exception');
+      return false;
+    }
   }
 
   static Future<void> _flush(String reason) async {
@@ -417,7 +565,7 @@ class MyAppCrew {
       return false;
     }
     _rebootstrapAttempted = true;
-    final ok = await _bootstrap();
+    final ok = _isInviteMode() ? await _claim() : await _bootstrap();
     if (!ok) {
       return false;
     }

@@ -47,12 +47,25 @@ Future<void> main() async {
 }
 ```
 
+## Invite claim usage
+
+```dart
+final result = await MyAppCrew.initialize(
+  publicKey: 'YOUR_PUBLIC_KEY',
+  baseUrl: 'https://api.myappcrew.com',
+  inviteId: 'YOUR_INVITE_ID',
+  nickname: 'Ada Lovelace',
+  email: 'ada@example.com',
+);
+```
+
 ## Configuration via --dart-define
 
 ```sh
 flutter run -d <device> \
   --dart-define=MYAPPCREW_BASE_URL=https://myappcrew-tw.pages.dev \
-  --dart-define=MYAPPCREW_PUBLIC_KEY=com.test_app.test
+  --dart-define=MYAPPCREW_PUBLIC_KEY=com.test_app.test \
+  --dart-define=MYAPPCREW_INVITE_ID=invite_123
 ```
 
 ## Data sent

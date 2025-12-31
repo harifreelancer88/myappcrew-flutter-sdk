@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+- Documentation and metadata touch-ups.
+- No runtime behavior changes.
+
 ## 0.1.1
 - Added example app.
 - Added pub.dev metadata (repository/issue tracker/topics).

@@ -1,6 +1,6 @@
 name: myappcrew_flutter
 description: "MyAppCrew Flutter SDK for bootstrapping testers, tracking screens, and batching events."
-version: 0.1.1
+version: 0.1.2
 homepage: https://myappcrew-tw.pages.dev
 repository: https://github.com/harifreelancer88/myappcrew-flutter-sdk
 issue_tracker: https://github.com/harifreelancer88/myappcrew-flutter-sdk/issues

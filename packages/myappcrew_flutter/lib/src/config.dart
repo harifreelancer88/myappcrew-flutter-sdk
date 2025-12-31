@@ -7,6 +7,9 @@ class MyAppCrewConfig {
     required this.flushAt,
     required this.flushInterval,
     required this.forceRebootstrap,
+    this.inviteId,
+    this.nickname,
+    this.email,
     this.appVersion,
     this.buildNumber,
     this.inviteCode,
@@ -22,4 +25,7 @@ class MyAppCrewConfig {
   final int flushAt;
   final Duration flushInterval;
   final bool forceRebootstrap;
+  final String? inviteId;
+  final String? nickname;
+  final String? email;
 }
