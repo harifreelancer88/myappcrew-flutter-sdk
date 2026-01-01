@@ -14,7 +14,11 @@ Future<void> main() async {
     publicKey: publicKey.isEmpty ? null : publicKey,
   );
 
-  runApp(const MyAppCrewExampleApp());
+  runApp(
+    MyAppCrewConnectWrapper(
+      child: const MyAppCrewExampleApp(),
+    ),
+  );
 }
 
 class MyAppCrewExampleApp extends StatelessWidget {

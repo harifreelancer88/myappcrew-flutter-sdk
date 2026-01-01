@@ -57,6 +57,33 @@ ElevatedButton(
 );
 ```
 
+## Optional: connect prompt UI (debug-only by default)
+
+Auto-prompt testers for the 6-digit Connect Code without extra app state.
+
+Option A (recommended):
+
+```dart
+runApp(MyAppCrewConnectWrapper(
+  child: const MyApp(),
+));
+```
+
+Option B (MaterialApp builder):
+
+```dart
+MaterialApp(
+  builder: (context, child) => MyAppCrewConnectWrapper(child: child!),
+)
+```
+
+Notes:
+- Debug builds only by default. Enable in release with
+  `MyAppCrewConnectWrapper(enabled: true, ...)`.
+- Testers enter the 6-digit Connect Code from the invite page.
+- Once connected, they will not be prompted again unless the app is cleared or
+  reinstalled (or the public key changes).
+
 ## Debugging (safe snapshot + logging)
 
 Read a safe snapshot that excludes secrets:

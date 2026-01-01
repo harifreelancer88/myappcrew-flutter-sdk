@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.6
+- Optional connect code UI wrapper (debug-only default) for auto prompt.
+
 ## 0.1.5
 - Added 6-digit Connect Code support in connect parsing and claim calls.
 - Added last connect input kind to debug snapshot and connect results.

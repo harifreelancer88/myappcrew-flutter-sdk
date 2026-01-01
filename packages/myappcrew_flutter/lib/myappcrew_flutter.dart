@@ -1,5 +1,6 @@
 import 'dart:async';
 
+export 'src/connect_ui.dart';
 export 'src/models.dart' show DebugSnapshot, MyAppCrewConnectResult;
 
 import 'package:device_info_plus/device_info_plus.dart';
@@ -10,6 +11,7 @@ import 'package:uuid/uuid.dart';
 
 import 'src/client.dart';
 import 'src/config.dart';
+import 'src/connect_ui.dart';
 import 'src/lifecycle.dart';
 import 'src/logger.dart';
 import 'src/models.dart';
@@ -76,9 +78,11 @@ class MyAppCrewFlutter {
             ? publicKey
             : publicKey.substring(publicKey.length - 4);
     final testerId = _testerId ?? '';
-    final connected = testerId.isNotEmpty;
+    final initialized = _isInitialized && _hasPublicKey;
+    final isAnonymous = testerId.startsWith('tst_');
+    final connected = initialized && testerId.isNotEmpty && !isAnonymous;
     return DebugSnapshot(
-      initialized: _isInitialized && _hasPublicKey,
+      initialized: initialized,
       baseUrl: _config?.baseUrl ?? _defaultBaseUrl,
       publicKeyLast4: last4,
       testerId: testerId,
@@ -369,6 +373,22 @@ class MyAppCrewFlutter {
     }
 
     return _applyClaimResult(result, inputKind);
+  }
+
+  static Future<void> showConnectSheet(
+    BuildContext context, {
+    bool showAsBottomSheet = true,
+    String title = 'Connect tester',
+    String subtitle = 'Enter the 6-digit Connect Code from your invite.',
+    bool allowDismiss = true,
+  }) async {
+    await showMyAppCrewConnectSheet(
+      context,
+      showAsBottomSheet: showAsBottomSheet,
+      title: title,
+      subtitle: subtitle,
+      allowDismiss: allowDismiss,
+    );
   }
 
   static void _ensureSessionId() {
@@ -882,6 +902,20 @@ class MyAppCrew {
       MyAppCrewFlutter.connectFromText(
         input,
         publicKeyOverride: publicKeyOverride,
+      );
+  static Future<void> showConnectSheet(
+    BuildContext context, {
+    bool showAsBottomSheet = true,
+    String title = 'Connect tester',
+    String subtitle = 'Enter the 6-digit Connect Code from your invite.',
+    bool allowDismiss = true,
+  }) =>
+      MyAppCrewFlutter.showConnectSheet(
+        context,
+        showAsBottomSheet: showAsBottomSheet,
+        title: title,
+        subtitle: subtitle,
+        allowDismiss: allowDismiss,
       );
   static void setDebugLogging(bool enabled) =>
       MyAppCrewFlutter.setDebugLogging(enabled);
