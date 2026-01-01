@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+- Added safe `DebugSnapshot` API for headless debugging.
+- Added debug logging toggle (off by default).
+- Added `connectFromText` typed result details and optional navigator observer accessor.
+- No breaking changes.
+
 ## 0.1.3
 - Simplified owner-facing `MyAppCrewFlutter` API with one-step `init`.
 - Disabled mode when `publicKey` is missing (no network calls).

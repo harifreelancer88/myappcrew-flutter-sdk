@@ -1,5 +1,7 @@
 import 'dart:async';
 
+export 'src/models.dart' show DebugSnapshot, MyAppCrewConnectResult;
+
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
@@ -18,13 +20,17 @@ import 'src/utils.dart';
 
 /// MyAppCrew SDK entry point.
 class MyAppCrewFlutter {
-  static const String _sdkVersion = '0.1.3';
+  static const String _sdkVersion = '0.1.4';
   static const int _maxBatchSize = 50;
   static const String _defaultBaseUrl = 'https://myappcrew-tw.pages.dev';
   static const String _defaultIngestPath = '/api/v1/mobile/events/batch';
   static const Duration _defaultTimeout = Duration(seconds: 8);
   static const int _defaultFlushAt = 10;
   static const Duration _defaultFlushInterval = Duration(seconds: 12);
+  static const bool _defaultDebugLogging = bool.fromEnvironment(
+    'MYAPPCREW_DEBUG_LOGS',
+    defaultValue: false,
+  );
 
   static final Uuid _uuid = const Uuid();
 
@@ -49,6 +55,8 @@ class MyAppCrewFlutter {
   static bool _isFlushing = false;
   static bool _rebootstrapAttempted = false;
   static bool _disabledLogEmitted = false;
+  static bool _debugLoggingEnabled = _defaultDebugLogging;
+  static bool _clientInjectedForTesting = false;
 
   static Map<String, dynamic> _appContext = <String, dynamic>{};
 
@@ -59,21 +67,41 @@ class MyAppCrewFlutter {
   static bool get isEnabled => _isEnabled;
 
   /// Returns a safe snapshot of SDK state for debugging.
-  static Map<String, dynamic> debugSnapshot() {
+  static DebugSnapshot getDebugSnapshot() {
     final publicKey = _config?.publicKey ?? '';
-    final suffix = publicKey.isEmpty
-        ? 'unavailable'
+    final last4 = publicKey.isEmpty
+        ? ''
         : publicKey.length <= 4
             ? publicKey
             : publicKey.substring(publicKey.length - 4);
+    final testerId = _testerId ?? '';
+    final connected = testerId.isNotEmpty;
+    return DebugSnapshot(
+      initialized: _isInitialized && _hasPublicKey,
+      baseUrl: _config?.baseUrl ?? _defaultBaseUrl,
+      publicKeyLast4: last4,
+      testerId: testerId,
+      connected: connected,
+      lastErrorCode: _lastError,
+      queuedEventsCount: _queue?.length ?? 0,
+      lastFlushAt: _toDateTime(_lastFlushAt),
+      lastBootstrapAt: _toDateTime(_lastBootstrapAt),
+    );
+  }
+
+  @Deprecated('Use getDebugSnapshot instead.')
+  static Map<String, dynamic> debugSnapshot() {
+    final snapshot = getDebugSnapshot();
     return <String, dynamic>{
-      'publicKeySuffix': suffix,
-      'testerId': _testerId ?? 'unavailable',
-      'ingestUrl': _ingestUrl ?? 'unavailable',
-      'lastError': _lastError,
-      'lastBootstrapAt': _lastBootstrapAt,
-      'lastFlushAt': _lastFlushAt,
-      'queueSize': _queue?.length ?? 0,
+      'initialized': snapshot.initialized,
+      'baseUrl': snapshot.baseUrl,
+      'publicKeyLast4': snapshot.publicKeyLast4,
+      'testerId': snapshot.testerId,
+      'connected': snapshot.connected,
+      'lastErrorCode': snapshot.lastErrorCode,
+      'queuedEventsCount': snapshot.queuedEventsCount,
+      'lastFlushAt': snapshot.lastFlushAt?.toIso8601String(),
+      'lastBootstrapAt': snapshot.lastBootstrapAt?.toIso8601String(),
     };
   }
 
@@ -81,21 +109,23 @@ class MyAppCrewFlutter {
   static Future<void> init({
     String? publicKey,
     String? baseUrl,
-    bool enableLogs = kDebugMode,
+    bool? enableLogs,
   }) async {
+    final debugLogs = enableLogs ?? _debugLoggingEnabled;
     final normalizedBaseUrl = normalizeBaseUrl(baseUrl ?? _defaultBaseUrl);
     final trimmedKey = publicKey?.trim() ?? '';
 
+    _applyDebugLogging(debugLogs);
     _config = MyAppCrewConfig(
       publicKey: trimmedKey,
       baseUrl: normalizedBaseUrl,
-      debugLogs: enableLogs,
+      debugLogs: debugLogs,
       timeout: _defaultTimeout,
       flushAt: _defaultFlushAt,
       flushInterval: _defaultFlushInterval,
       forceRebootstrap: false,
     );
-    _logger ??= MyAppCrewLogger(enableLogs);
+    _logger ??= MyAppCrewLogger(debugLogs);
     _client ??= MyAppCrewClient(timeout: _defaultTimeout, logger: _logger!);
     _storage ??= MyAppCrewStorage();
     _queue ??= MyAppCrewQueue();
@@ -145,6 +175,14 @@ class MyAppCrewFlutter {
     _logger?.log('init ok');
   }
 
+  /// Enable or disable SDK debug logging.
+  static void setDebugLogging(bool enabled) {
+    _applyDebugLogging(enabled);
+  }
+
+  @visibleForTesting
+  static bool get debugLoggingEnabled => _debugLoggingEnabled;
+
   /// Log an event. Safe to call before init.
   static void logEvent(String name, {Map<String, dynamic>? params}) {
     try {
@@ -183,7 +221,10 @@ class MyAppCrewFlutter {
   }
 
   /// Navigator observer for auto screen tracking.
-  static NavigatorObserver get navigatorObserver {
+  static NavigatorObserver? navigatorObserver() {
+    if (!_isInitialized || !_isEnabled) {
+      return null;
+    }
     return MyAppCrewNavigatorObserver(
       onScreenChange: (screen) {
         _currentScreen = screen;
@@ -199,23 +240,39 @@ class MyAppCrewFlutter {
     final token = claimToken.trim();
     if (token.isEmpty) {
       _lastError = 'claim_token_missing';
-      return const MyAppCrewConnectResult(connected: false);
+      return const MyAppCrewConnectResult(
+        connected: false,
+        errorCode: 'claim_token_missing',
+        message: 'Claim token missing',
+      );
     }
     if (_config == null) {
       _lastError = 'not_initialized';
-      return const MyAppCrewConnectResult(connected: false);
+      return const MyAppCrewConnectResult(
+        connected: false,
+        errorCode: 'not_initialized',
+        message: 'SDK not initialized',
+      );
     }
     if (!_hasPublicKey) {
       _lastError = 'missing_public_key';
       _emitDisabledLogOnce();
-      return const MyAppCrewConnectResult(connected: false);
+      return const MyAppCrewConnectResult(
+        connected: false,
+        errorCode: 'missing_public_key',
+        message: 'Missing public key',
+      );
     }
 
     if (_accessToken == null || _accessToken!.isEmpty) {
       final ok = await _bootstrap();
       if (!ok) {
         _isEnabled = false;
-        return const MyAppCrewConnectResult(connected: false);
+        return MyAppCrewConnectResult(
+          connected: false,
+          errorCode: _lastError ?? 'bootstrap_failed',
+          message: 'Bootstrap failed',
+        );
       }
     }
 
@@ -237,7 +294,11 @@ class MyAppCrewFlutter {
     final token = parseClaimToken(input);
     if (token == null || token.isEmpty) {
       _lastError = 'claim_token_missing';
-      return const MyAppCrewConnectResult(connected: false);
+      return const MyAppCrewConnectResult(
+        connected: false,
+        errorCode: 'claim_token_missing',
+        message: 'Claim token missing',
+      );
     }
     return connectWithClaimToken(token);
   }
@@ -246,9 +307,38 @@ class MyAppCrewFlutter {
     _sessionId ??= _uuid.v4();
   }
 
+  static void _applyDebugLogging(bool enabled) {
+    _debugLoggingEnabled = enabled;
+    _logger = MyAppCrewLogger(enabled);
+    if (_client != null && !_clientInjectedForTesting) {
+      final timeout = _config?.timeout ?? _defaultTimeout;
+      _client = MyAppCrewClient(timeout: timeout, logger: _logger!);
+    }
+    if (_config != null) {
+      _config = _cloneConfig(_config!, debugLogs: enabled);
+    }
+  }
+
   static bool get _hasPublicKey {
     final publicKey = _config?.publicKey;
     return publicKey != null && publicKey.trim().isNotEmpty;
+  }
+
+  static MyAppCrewConfig _cloneConfig(
+    MyAppCrewConfig config, {
+    required bool debugLogs,
+  }) {
+    return MyAppCrewConfig(
+      publicKey: config.publicKey,
+      baseUrl: config.baseUrl,
+      debugLogs: debugLogs,
+      timeout: config.timeout,
+      flushAt: config.flushAt,
+      flushInterval: config.flushInterval,
+      forceRebootstrap: config.forceRebootstrap,
+      appVersion: config.appVersion,
+      buildNumber: config.buildNumber,
+    );
   }
 
   static void _emitDisabledLogOnce() {
@@ -256,7 +346,7 @@ class MyAppCrewFlutter {
       return;
     }
     _disabledLogEmitted = true;
-    if (_config?.debugLogs ?? false) {
+    if (_debugLoggingEnabled) {
       _logger?.log(
         'MyAppCrew disabled: missing publicKey. '
         'Paste your key into MyAppCrewFlutter.init(publicKey: ...)',
@@ -465,7 +555,11 @@ class MyAppCrewFlutter {
     if (result.statusCode < 200 || result.statusCode >= 300) {
       _lastError = 'claim_failed_${result.statusCode}';
       _logger?.log('claim failed (${result.statusCode})');
-      return const MyAppCrewConnectResult(connected: false);
+      return MyAppCrewConnectResult(
+        connected: false,
+        errorCode: _lastError,
+        message: 'Claim failed',
+      );
     }
 
     final token = firstStringKey(result.json, <String>[
@@ -486,7 +580,11 @@ class MyAppCrewFlutter {
     if (token == null || testerId == null) {
       _lastError = 'claim_missing_fields';
       _logger?.log('claim missing fields');
-      return const MyAppCrewConnectResult(connected: false);
+      return const MyAppCrewConnectResult(
+        connected: false,
+        errorCode: 'claim_missing_fields',
+        message: 'Claim response missing fields',
+      );
     }
 
     _accessToken = token;
@@ -610,9 +708,17 @@ class MyAppCrewFlutter {
     }
   }
 
+  static DateTime? _toDateTime(int? seconds) {
+    if (seconds == null) {
+      return null;
+    }
+    return DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+  }
+
   @visibleForTesting
   static void setClientForTesting(MyAppCrewClient client) {
     _client = client;
+    _clientInjectedForTesting = true;
   }
 
   @visibleForTesting
@@ -638,6 +744,8 @@ class MyAppCrewFlutter {
     _isFlushing = false;
     _rebootstrapAttempted = false;
     _disabledLogEmitted = false;
+    _debugLoggingEnabled = _defaultDebugLogging;
+    _clientInjectedForTesting = false;
     _appContext = <String, dynamic>{};
   }
 }
@@ -647,7 +755,7 @@ class MyAppCrew {
   static Future<void> init({
     String? publicKey,
     String? baseUrl,
-    bool enableLogs = kDebugMode,
+    bool? enableLogs,
   }) =>
       MyAppCrewFlutter.init(
         publicKey: publicKey,
@@ -658,7 +766,7 @@ class MyAppCrew {
   static Future<void> initialize({
     required String publicKey,
     required String baseUrl,
-    bool debugLogs = true,
+    bool debugLogs = false,
   }) =>
       MyAppCrewFlutter.init(
         publicKey: publicKey,
@@ -668,10 +776,14 @@ class MyAppCrew {
 
   static bool get isInitialized => MyAppCrewFlutter.isInitialized;
   static bool get isEnabled => MyAppCrewFlutter.isEnabled;
+  static DebugSnapshot getDebugSnapshot() =>
+      MyAppCrewFlutter.getDebugSnapshot();
+
+  @Deprecated('Use getDebugSnapshot instead.')
   static Map<String, dynamic> debugSnapshot() =>
       MyAppCrewFlutter.debugSnapshot();
-  static NavigatorObserver get navigatorObserver =>
-      MyAppCrewFlutter.navigatorObserver;
+  static NavigatorObserver? navigatorObserver() =>
+      MyAppCrewFlutter.navigatorObserver();
   static void logEvent(String name, {Map<String, dynamic>? params}) =>
       MyAppCrewFlutter.logEvent(name, params: params);
   static Future<void> flushNow() => MyAppCrewFlutter.flushNow();
@@ -681,6 +793,8 @@ class MyAppCrew {
       MyAppCrewFlutter.connectWithClaimToken(claimToken);
   static Future<MyAppCrewConnectResult> connectFromText(String input) =>
       MyAppCrewFlutter.connectFromText(input);
+  static void setDebugLogging(bool enabled) =>
+      MyAppCrewFlutter.setDebugLogging(enabled);
 }
 
 enum _SendResult { success, failed, unauthorized }

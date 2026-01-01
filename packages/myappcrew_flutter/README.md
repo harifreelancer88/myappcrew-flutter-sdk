@@ -1,8 +1,8 @@
 # MyAppCrew Flutter SDK
 
-Tiny SDK for bootstrapping testers, tracking lifecycle/screen events, and batching events.
+Headless SDK for bootstrapping testers, tracking lifecycle/screen events, and batching events.
 
-## 2-minute install (minimum)
+## Minimal install (dependency + init)
 
 1) Add dependency:
 
@@ -26,18 +26,20 @@ Notes:
 - `baseUrl` is optional and defaults to `https://myappcrew-tw.pages.dev`.
 - If `publicKey` is missing, the SDK disables itself (no network calls).
 
-## Optional: screen tracking
+## Optional: screen tracking (navigator observer)
 
 Add the navigator observer when you want screen tracking:
 
 ```dart
+final observer = MyAppCrewFlutter.navigatorObserver();
+
 MaterialApp(
-  navigatorObservers: [MyAppCrewFlutter.navigatorObserver],
+  navigatorObservers: observer == null ? const [] : [observer],
   home: const MyHomePage(),
 );
 ```
 
-## Tester connect (no deep links)
+## Optional: manual connect (claim link or token)
 
 1) Tester joins the invite in a browser.
 2) Copy the claim token or full claim link.
@@ -53,4 +55,24 @@ ElevatedButton(
   },
   child: const Text('Connect tester'),
 );
+```
+
+## Debugging (safe snapshot + logging)
+
+Read a safe snapshot that excludes secrets:
+
+```dart
+final snapshot = MyAppCrewFlutter.getDebugSnapshot();
+```
+
+Enable SDK logging explicitly (off by default):
+
+```dart
+MyAppCrewFlutter.setDebugLogging(true);
+```
+
+You can also enable logging at compile time:
+
+```sh
+flutter run --dart-define=MYAPPCREW_DEBUG_LOGS=true
 ```

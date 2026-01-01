@@ -58,6 +58,48 @@ void main() {
     expect(MyAppCrewFlutter.isEnabled, isFalse);
   });
 
+  test('disabled mode snapshot reports not initialized', () async {
+    await MyAppCrewFlutter.init();
+    final snapshot = MyAppCrewFlutter.getDebugSnapshot();
+    expect(snapshot.initialized, isFalse);
+    expect(snapshot.lastErrorCode, 'missing_public_key');
+  });
+
+  test('setDebugLogging toggles flag', () {
+    MyAppCrewFlutter.setDebugLogging(true);
+    expect(MyAppCrewFlutter.debugLoggingEnabled, isTrue);
+    MyAppCrewFlutter.setDebugLogging(false);
+    expect(MyAppCrewFlutter.debugLoggingEnabled, isFalse);
+  });
+
+  test('debug snapshot never includes tokens', () async {
+    final fake = _FakeClient(
+      responses: <_FakeResponse>[
+        const _FakeResponse(200, <String, dynamic>{
+          'accessToken': 'eyJ_token_bootstrap',
+          'testerId': 'tester_bootstrap',
+          'ingestUrl': '/api/v1/mobile/events/batch',
+        }),
+      ],
+    );
+    MyAppCrewFlutter.setClientForTesting(fake);
+
+    await MyAppCrewFlutter.init(
+      publicKey: 'pk_test',
+      baseUrl: 'https://example.com',
+      enableLogs: false,
+    );
+
+    final snapshot = MyAppCrewFlutter.getDebugSnapshot();
+    final combined = <String>[
+      snapshot.baseUrl,
+      snapshot.publicKeyLast4,
+      snapshot.testerId,
+      snapshot.lastErrorCode ?? '',
+    ].join('|');
+    expect(combined.contains('eyJ'), isFalse);
+  });
+
   test('connectFromText parses claim tokens from inputs', () async {
     final fake = _FakeClient(
       responses: <_FakeResponse>[
@@ -108,6 +150,30 @@ void main() {
       claimTokens,
       <Object?>['claim_123', 'claim_456', 'claim_789'],
     );
+  });
+
+  test('connectFromText returns error for garbage input', () async {
+    final fake = _FakeClient(
+      responses: <_FakeResponse>[
+        const _FakeResponse(200, <String, dynamic>{
+          'accessToken': 'token_bootstrap',
+          'testerId': 'tester_bootstrap',
+          'ingestUrl': '/api/v1/mobile/events/batch',
+        }),
+        const _FakeResponse(400, <String, dynamic>{}),
+      ],
+    );
+    MyAppCrewFlutter.setClientForTesting(fake);
+
+    await MyAppCrewFlutter.init(
+      publicKey: 'pk_test',
+      baseUrl: 'https://example.com',
+      enableLogs: false,
+    );
+
+    final result = await MyAppCrewFlutter.connectFromText('garbage_input');
+    expect(result.connected, isFalse);
+    expect(result.errorCode, 'claim_failed_400');
   });
 
   test('connectWithClaimToken retries once on 401', () async {

@@ -6,9 +6,10 @@ class MyAppCrewLogger {
   final bool debugLogs;
 
   void log(String message) {
-    if (!debugLogs || !kDebugMode) {
+    if (!debugLogs) {
       return;
     }
+    // debugPrint is safe in release when explicitly enabled.
     debugPrint('[MyAppCrew] $message');
   }
 }

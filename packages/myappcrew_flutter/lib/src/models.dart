@@ -43,8 +43,36 @@ class MyAppCrewConnectResult {
   const MyAppCrewConnectResult({
     required this.connected,
     this.testerId,
+    this.errorCode,
+    this.message,
   });
 
   final bool connected;
   final String? testerId;
+  final String? errorCode;
+  final String? message;
+}
+
+class DebugSnapshot {
+  const DebugSnapshot({
+    required this.initialized,
+    required this.baseUrl,
+    required this.publicKeyLast4,
+    required this.testerId,
+    required this.connected,
+    required this.lastErrorCode,
+    required this.queuedEventsCount,
+    required this.lastFlushAt,
+    required this.lastBootstrapAt,
+  });
+
+  final bool initialized;
+  final String baseUrl;
+  final String publicKeyLast4;
+  final String testerId;
+  final bool connected;
+  final String? lastErrorCode;
+  final int queuedEventsCount;
+  final DateTime? lastFlushAt;
+  final DateTime? lastBootstrapAt;
 }
