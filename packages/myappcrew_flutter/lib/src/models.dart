@@ -43,12 +43,14 @@ class MyAppCrewConnectResult {
   const MyAppCrewConnectResult({
     required this.connected,
     this.testerId,
+    this.inputKind,
     this.errorCode,
     this.message,
   });
 
   final bool connected;
   final String? testerId;
+  final String? inputKind;
   final String? errorCode;
   final String? message;
 }
@@ -61,6 +63,7 @@ class DebugSnapshot {
     required this.testerId,
     required this.connected,
     required this.lastErrorCode,
+    required this.lastConnectInputKind,
     required this.queuedEventsCount,
     required this.lastFlushAt,
     required this.lastBootstrapAt,
@@ -72,6 +75,7 @@ class DebugSnapshot {
   final String testerId;
   final bool connected;
   final String? lastErrorCode;
+  final String? lastConnectInputKind;
   final int queuedEventsCount;
   final DateTime? lastFlushAt;
   final DateTime? lastBootstrapAt;

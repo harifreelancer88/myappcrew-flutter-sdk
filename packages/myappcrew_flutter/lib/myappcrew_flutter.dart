@@ -20,7 +20,7 @@ import 'src/utils.dart';
 
 /// MyAppCrew SDK entry point.
 class MyAppCrewFlutter {
-  static const String _sdkVersion = '0.1.4';
+  static const String _sdkVersion = '0.1.5';
   static const int _maxBatchSize = 50;
   static const String _defaultBaseUrl = 'https://myappcrew-tw.pages.dev';
   static const String _defaultIngestPath = '/api/v1/mobile/events/batch';
@@ -48,6 +48,7 @@ class MyAppCrewFlutter {
   static String? _currentScreen;
   static String? _ingestUrl;
   static String? _lastError;
+  static String? _lastConnectInputKind;
   static int? _lastBootstrapAt;
   static int? _lastFlushAt;
   static bool _isInitialized = false;
@@ -83,6 +84,7 @@ class MyAppCrewFlutter {
       testerId: testerId,
       connected: connected,
       lastErrorCode: _lastError,
+      lastConnectInputKind: _lastConnectInputKind,
       queuedEventsCount: _queue?.length ?? 0,
       lastFlushAt: _toDateTime(_lastFlushAt),
       lastBootstrapAt: _toDateTime(_lastBootstrapAt),
@@ -99,6 +101,7 @@ class MyAppCrewFlutter {
       'testerId': snapshot.testerId,
       'connected': snapshot.connected,
       'lastErrorCode': snapshot.lastErrorCode,
+      'lastConnectInputKind': snapshot.lastConnectInputKind,
       'queuedEventsCount': snapshot.queuedEventsCount,
       'lastFlushAt': snapshot.lastFlushAt?.toIso8601String(),
       'lastBootstrapAt': snapshot.lastBootstrapAt?.toIso8601String(),
@@ -237,19 +240,90 @@ class MyAppCrewFlutter {
   static Future<MyAppCrewConnectResult> connectWithClaimToken(
     String claimToken,
   ) async {
-    final token = claimToken.trim();
-    if (token.isEmpty) {
+    return _connectWithClaim(
+      claimToken: claimToken,
+      inputKind: 'token',
+    );
+  }
+
+  /// Connect using text that may include a claim token or URL.
+  static Future<MyAppCrewConnectResult> connectFromText(
+    String input, {
+    String? publicKeyOverride,
+  }) async {
+    final parsed = parseConnectInput(input);
+    _lastConnectInputKind = parsed.inputKind;
+
+    final overrideKey = publicKeyOverride?.trim();
+    final parsedKey = parsed.parsedPublicKey?.trim();
+    final targetKey =
+        (overrideKey != null && overrideKey.isNotEmpty) ? overrideKey : parsedKey;
+    if (targetKey != null &&
+        targetKey.isNotEmpty &&
+        _config != null &&
+        _config!.publicKey != targetKey) {
+      await init(
+        publicKey: targetKey,
+        baseUrl: _config!.baseUrl,
+        enableLogs: _debugLoggingEnabled,
+      );
+    }
+
+    if (parsed.inputKind == 'code' && parsed.connectCode != null) {
+      return _connectWithClaim(
+        connectCode: parsed.connectCode,
+        inputKind: parsed.inputKind,
+      );
+    }
+
+    if (parsed.claimToken != null && parsed.claimToken!.isNotEmpty) {
+      return _connectWithClaim(
+        claimToken: parsed.claimToken,
+        inputKind: parsed.inputKind,
+      );
+    }
+
+    _lastError = 'claim_token_missing';
+    return MyAppCrewConnectResult(
+      connected: false,
+      inputKind: parsed.inputKind,
+      errorCode: 'claim_token_missing',
+      message: 'Claim token missing',
+    );
+  }
+
+  static Future<MyAppCrewConnectResult> _connectWithClaim({
+    String? claimToken,
+    String? connectCode,
+    required String inputKind,
+  }) async {
+    _lastConnectInputKind = inputKind;
+    final token = claimToken?.trim() ?? '';
+    final code = connectCode?.trim() ?? '';
+
+    if (token.isEmpty && code.isEmpty) {
       _lastError = 'claim_token_missing';
-      return const MyAppCrewConnectResult(
+      return MyAppCrewConnectResult(
         connected: false,
+        inputKind: inputKind,
         errorCode: 'claim_token_missing',
         message: 'Claim token missing',
       );
     }
+    if (token.isNotEmpty && code.isNotEmpty) {
+      _lastError = 'claim_payload_conflict';
+      return MyAppCrewConnectResult(
+        connected: false,
+        inputKind: inputKind,
+        errorCode: 'claim_payload_conflict',
+        message: 'Claim payload conflict',
+      );
+    }
     if (_config == null) {
       _lastError = 'not_initialized';
-      return const MyAppCrewConnectResult(
+      return MyAppCrewConnectResult(
         connected: false,
+        inputKind: inputKind,
         errorCode: 'not_initialized',
         message: 'SDK not initialized',
       );
@@ -257,8 +331,9 @@ class MyAppCrewFlutter {
     if (!_hasPublicKey) {
       _lastError = 'missing_public_key';
       _emitDisabledLogOnce();
-      return const MyAppCrewConnectResult(
+      return MyAppCrewConnectResult(
         connected: false,
+        inputKind: inputKind,
         errorCode: 'missing_public_key',
         message: 'Missing public key',
       );
@@ -270,6 +345,7 @@ class MyAppCrewFlutter {
         _isEnabled = false;
         return MyAppCrewConnectResult(
           connected: false,
+          inputKind: inputKind,
           errorCode: _lastError ?? 'bootstrap_failed',
           message: 'Bootstrap failed',
         );
@@ -277,30 +353,22 @@ class MyAppCrewFlutter {
     }
 
     _rebootstrapAttempted = false;
-    var result = await _postClaim(token);
+    var result = await _postClaim(
+      claimToken: token.isNotEmpty ? token : null,
+      connectCode: code.isNotEmpty ? code : null,
+    );
     if (result.statusCode == 401 && !_rebootstrapAttempted) {
       _rebootstrapAttempted = true;
       final ok = await _bootstrap();
       if (ok) {
-        result = await _postClaim(token);
+        result = await _postClaim(
+          claimToken: token.isNotEmpty ? token : null,
+          connectCode: code.isNotEmpty ? code : null,
+        );
       }
     }
 
-    return _applyClaimResult(result);
-  }
-
-  /// Connect using text that may include a claim token or URL.
-  static Future<MyAppCrewConnectResult> connectFromText(String input) async {
-    final token = parseClaimToken(input);
-    if (token == null || token.isEmpty) {
-      _lastError = 'claim_token_missing';
-      return const MyAppCrewConnectResult(
-        connected: false,
-        errorCode: 'claim_token_missing',
-        message: 'Claim token missing',
-      );
-    }
-    return connectWithClaimToken(token);
+    return _applyClaimResult(result, inputKind);
   }
 
   static void _ensureSessionId() {
@@ -525,16 +593,24 @@ class MyAppCrewFlutter {
     }
   }
 
-  static Future<MyAppCrewHttpResult> _postClaim(String claimToken) async {
+  static Future<MyAppCrewHttpResult> _postClaim({
+    String? claimToken,
+    String? connectCode,
+  }) async {
     if (_client == null || _config == null || _accessToken == null) {
       return const MyAppCrewHttpResult(statusCode: 0);
     }
     try {
       final payload = <String, dynamic>{
-        'claimToken': claimToken,
         'ts': unixSeconds(),
         'sdkVersion': _sdkVersion,
       };
+      if (claimToken != null && claimToken.isNotEmpty) {
+        payload['claimToken'] = claimToken;
+      }
+      if (connectCode != null && connectCode.isNotEmpty) {
+        payload['connectCode'] = connectCode;
+      }
       if (_appContext.isNotEmpty) {
         payload.addAll(_appContext);
       }
@@ -551,12 +627,14 @@ class MyAppCrewFlutter {
 
   static Future<MyAppCrewConnectResult> _applyClaimResult(
     MyAppCrewHttpResult result,
+    String inputKind,
   ) async {
     if (result.statusCode < 200 || result.statusCode >= 300) {
       _lastError = 'claim_failed_${result.statusCode}';
       _logger?.log('claim failed (${result.statusCode})');
       return MyAppCrewConnectResult(
         connected: false,
+        inputKind: inputKind,
         errorCode: _lastError,
         message: 'Claim failed',
       );
@@ -580,8 +658,9 @@ class MyAppCrewFlutter {
     if (token == null || testerId == null) {
       _lastError = 'claim_missing_fields';
       _logger?.log('claim missing fields');
-      return const MyAppCrewConnectResult(
+      return MyAppCrewConnectResult(
         connected: false,
+        inputKind: inputKind,
         errorCode: 'claim_missing_fields',
         message: 'Claim response missing fields',
       );
@@ -609,7 +688,11 @@ class MyAppCrewFlutter {
       unawaited(flushNow());
     }
 
-    return MyAppCrewConnectResult(connected: true, testerId: testerId);
+    return MyAppCrewConnectResult(
+      connected: true,
+      testerId: testerId,
+      inputKind: inputKind,
+    );
   }
 
   static Future<void> _flush(String reason) async {
@@ -737,6 +820,7 @@ class MyAppCrewFlutter {
     _currentScreen = null;
     _ingestUrl = null;
     _lastError = null;
+    _lastConnectInputKind = null;
     _lastBootstrapAt = null;
     _lastFlushAt = null;
     _isInitialized = false;
@@ -791,8 +875,14 @@ class MyAppCrew {
     String claimToken,
   ) =>
       MyAppCrewFlutter.connectWithClaimToken(claimToken);
-  static Future<MyAppCrewConnectResult> connectFromText(String input) =>
-      MyAppCrewFlutter.connectFromText(input);
+  static Future<MyAppCrewConnectResult> connectFromText(
+    String input, {
+    String? publicKeyOverride,
+  }) =>
+      MyAppCrewFlutter.connectFromText(
+        input,
+        publicKeyOverride: publicKeyOverride,
+      );
   static void setDebugLogging(bool enabled) =>
       MyAppCrewFlutter.setDebugLogging(enabled);
 }

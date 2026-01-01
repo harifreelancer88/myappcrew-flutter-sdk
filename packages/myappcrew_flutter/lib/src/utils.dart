@@ -2,6 +2,20 @@ import 'dart:convert';
 
 int unixSeconds() => DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
+class MyAppCrewParsedConnectInput {
+  const MyAppCrewParsedConnectInput({
+    required this.inputKind,
+    this.parsedPublicKey,
+    this.claimToken,
+    this.connectCode,
+  });
+
+  final String inputKind;
+  final String? parsedPublicKey;
+  final String? claimToken;
+  final String? connectCode;
+}
+
 String normalizeBaseUrl(String baseUrl) {
   var normalized = baseUrl.trim();
   while (normalized.endsWith('/')) {
@@ -47,26 +61,70 @@ String? firstStringKey(Map<String, dynamic>? map, List<String> keys) {
   return null;
 }
 
-String? parseClaimToken(String input) {
+MyAppCrewParsedConnectInput parseConnectInput(String input) {
   final trimmed = input.trim();
   if (trimmed.isEmpty) {
-    return null;
+    return const MyAppCrewParsedConnectInput(inputKind: 'unknown');
   }
 
   final uri = Uri.tryParse(trimmed);
   if (uri != null && (uri.hasScheme || trimmed.contains('?'))) {
+    final parsedPublicKey = uri.queryParameters['pk'] ??
+        uri.queryParameters['publicKey'] ??
+        uri.queryParameters['public_key'];
     final queryToken = uri.queryParameters['claimToken'] ??
         uri.queryParameters['claim_token'];
     if (queryToken != null && queryToken.isNotEmpty) {
-      return queryToken;
+      return MyAppCrewParsedConnectInput(
+        inputKind: 'link',
+        parsedPublicKey: parsedPublicKey,
+        claimToken: queryToken,
+      );
     }
     if (uri.pathSegments.isNotEmpty) {
       final last = uri.pathSegments.last.trim();
       if (last.isNotEmpty) {
-        return last;
+        return MyAppCrewParsedConnectInput(
+          inputKind: 'link',
+          parsedPublicKey: parsedPublicKey,
+          claimToken: last,
+        );
       }
     }
   }
 
-  return trimmed;
+  final connectCode = _normalizeConnectCode(trimmed);
+  if (connectCode != null) {
+    return MyAppCrewParsedConnectInput(
+      inputKind: 'code',
+      connectCode: connectCode,
+    );
+  }
+
+  if (_isUuid(trimmed)) {
+    return MyAppCrewParsedConnectInput(
+      inputKind: 'token',
+      claimToken: trimmed,
+    );
+  }
+
+  return const MyAppCrewParsedConnectInput(inputKind: 'unknown');
+}
+
+String? _normalizeConnectCode(String input) {
+  final normalized = input.replaceAll(RegExp(r'[\s-]'), '');
+  if (RegExp(r'^\d{6}$').hasMatch(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
+bool _isUuid(String input) {
+  return RegExp(
+    r'^[0-9a-fA-F]{8}-'
+    r'[0-9a-fA-F]{4}-'
+    r'[0-9a-fA-F]{4}-'
+    r'[0-9a-fA-F]{4}-'
+    r'[0-9a-fA-F]{12}$',
+  ).hasMatch(input);
 }

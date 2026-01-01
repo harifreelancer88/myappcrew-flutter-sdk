@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5
+- Added 6-digit Connect Code support in connect parsing and claim calls.
+- Added last connect input kind to debug snapshot and connect results.
+
 ## 0.1.4
 - Added safe `DebugSnapshot` API for headless debugging.
 - Added debug logging toggle (off by default).

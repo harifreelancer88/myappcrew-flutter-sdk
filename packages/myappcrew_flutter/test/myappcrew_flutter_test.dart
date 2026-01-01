@@ -3,6 +3,7 @@ import 'package:myappcrew_flutter/myappcrew_flutter.dart';
 import 'package:myappcrew_flutter/src/client.dart';
 import 'package:myappcrew_flutter/src/logger.dart';
 import 'package:myappcrew_flutter/src/models.dart';
+import 'package:myappcrew_flutter/src/utils.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeResponse {
@@ -101,6 +102,9 @@ void main() {
   });
 
   test('connectFromText parses claim tokens from inputs', () async {
+    const claim1 = '7b7c0f8c-1234-4d1a-9c64-2aef9d9e1f1a';
+    const claim2 = '11111111-2222-3333-4444-555555555555';
+    const claim3 = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
     final fake = _FakeClient(
       responses: <_FakeResponse>[
         const _FakeResponse(200, <String, dynamic>{
@@ -133,12 +137,12 @@ void main() {
       enableLogs: false,
     );
 
-    await MyAppCrewFlutter.connectFromText('claim_123');
+    await MyAppCrewFlutter.connectFromText(claim1);
     await MyAppCrewFlutter.connectFromText(
-      'https://myappcrew-tw.pages.dev/claim/claim_456',
+      'https://myappcrew-tw.pages.dev/claim/$claim2',
     );
     await MyAppCrewFlutter.connectFromText(
-      'https://myappcrew-tw.pages.dev?publicKey=pk&claimToken=claim_789',
+      'https://myappcrew-tw.pages.dev?publicKey=pk&claimToken=$claim3',
     );
 
     final claimTokens = fake.payloads
@@ -148,7 +152,7 @@ void main() {
 
     expect(
       claimTokens,
-      <Object?>['claim_123', 'claim_456', 'claim_789'],
+      <Object?>[claim1, claim2, claim3],
     );
   });
 
@@ -160,7 +164,6 @@ void main() {
           'testerId': 'tester_bootstrap',
           'ingestUrl': '/api/v1/mobile/events/batch',
         }),
-        const _FakeResponse(400, <String, dynamic>{}),
       ],
     );
     MyAppCrewFlutter.setClientForTesting(fake);
@@ -173,7 +176,95 @@ void main() {
 
     final result = await MyAppCrewFlutter.connectFromText('garbage_input');
     expect(result.connected, isFalse);
-    expect(result.errorCode, 'claim_failed_400');
+    expect(result.errorCode, 'claim_token_missing');
+    expect(result.inputKind, 'unknown');
+  });
+
+  test('parseConnectInput recognizes connect codes', () {
+    final spaced = parseConnectInput('057 126');
+    final plain = parseConnectInput('057126');
+
+    expect(spaced.inputKind, 'code');
+    expect(spaced.connectCode, '057126');
+    expect(plain.inputKind, 'code');
+    expect(plain.connectCode, '057126');
+  });
+
+  test('parseConnectInput recognizes links and tokens', () {
+    const token = '6f2a9c2e-9a91-4e6a-b4a5-2b5af1eb3a91';
+    final link = parseConnectInput(
+      'myappcrew://claim/$token?pk=pk_test',
+    );
+    final direct = parseConnectInput(token);
+
+    expect(link.inputKind, 'link');
+    expect(link.claimToken, token);
+    expect(link.parsedPublicKey, 'pk_test');
+    expect(direct.inputKind, 'token');
+    expect(direct.claimToken, token);
+  });
+
+  test('connectFromText uses connect code payload', () async {
+    final fake = _FakeClient(
+      responses: <_FakeResponse>[
+        const _FakeResponse(200, <String, dynamic>{
+          'accessToken': 'token_bootstrap',
+          'testerId': 'tester_bootstrap',
+          'ingestUrl': '/api/v1/mobile/events/batch',
+        }),
+        const _FakeResponse(200, <String, dynamic>{
+          'accessToken': 'token_claim_ok',
+          'testerId': 'tester_claim_ok',
+          'ingestUrl': '/api/v1/mobile/events/batch',
+        }),
+      ],
+    );
+    MyAppCrewFlutter.setClientForTesting(fake);
+
+    await MyAppCrewFlutter.init(
+      publicKey: 'pk_test',
+      baseUrl: 'https://example.com',
+      enableLogs: false,
+    );
+
+    await MyAppCrewFlutter.connectFromText('057 126');
+
+    final claimPayload = fake.payloads
+        .firstWhere((payload) => payload.containsKey('connectCode'));
+    expect(claimPayload['connectCode'], '057126');
+    expect(claimPayload.containsKey('claimToken'), isFalse);
+  });
+
+  test('connectFromText uses claim token payload', () async {
+    const token = '0b2c3d4e-5f60-4a7b-8c9d-0123456789ab';
+    final fake = _FakeClient(
+      responses: <_FakeResponse>[
+        const _FakeResponse(200, <String, dynamic>{
+          'accessToken': 'token_bootstrap',
+          'testerId': 'tester_bootstrap',
+          'ingestUrl': '/api/v1/mobile/events/batch',
+        }),
+        const _FakeResponse(200, <String, dynamic>{
+          'accessToken': 'token_claim_ok',
+          'testerId': 'tester_claim_ok',
+          'ingestUrl': '/api/v1/mobile/events/batch',
+        }),
+      ],
+    );
+    MyAppCrewFlutter.setClientForTesting(fake);
+
+    await MyAppCrewFlutter.init(
+      publicKey: 'pk_test',
+      baseUrl: 'https://example.com',
+      enableLogs: false,
+    );
+
+    await MyAppCrewFlutter.connectFromText(token);
+
+    final claimPayload = fake.payloads
+        .firstWhere((payload) => payload.containsKey('claimToken'));
+    expect(claimPayload['claimToken'], token);
+    expect(claimPayload.containsKey('connectCode'), isFalse);
   });
 
   test('connectWithClaimToken retries once on 401', () async {

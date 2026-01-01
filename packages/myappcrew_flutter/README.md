@@ -39,11 +39,11 @@ MaterialApp(
 );
 ```
 
-## Optional: manual connect (claim link or token)
+## Optional: manual connect (claim link, token, or 6-digit code)
 
 1) Tester joins the invite in a browser.
-2) Copy the claim token or full claim link.
-3) In-app, call `connectFromText(...)` (token or URL both work):
+2) Copy the claim token, full claim link, or 6-digit Connect Code.
+3) In-app, call `connectFromText(...)` (token, URL, or 6-digit code):
 
 ```dart
 ElevatedButton(
