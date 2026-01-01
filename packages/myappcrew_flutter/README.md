@@ -61,28 +61,19 @@ ElevatedButton(
 
 Auto-prompt testers for the 6-digit Connect Code without extra app state.
 
-Option A (recommended):
-
 ```dart
-runApp(MyAppCrewConnectWrapper(
-  child: const MyApp(),
-));
-```
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await MyAppCrewFlutter.init(publicKey: 'YOUR_PUBLIC_KEY');
 
-Option B (MaterialApp builder):
-
-```dart
-MaterialApp(
-  builder: (context, child) => MyAppCrewConnectWrapper(child: child!),
-)
+  runApp(const MyAppCrewConnectPrompt(child: MyApp()));
+}
 ```
 
 Notes:
 - Debug builds only by default. Enable in release with
-  `MyAppCrewConnectWrapper(enabled: true, ...)`.
+  `MyAppCrewConnectPrompt(debugOnly: false, ...)`.
 - Testers enter the 6-digit Connect Code from the invite page.
-- Once connected, they will not be prompted again unless the app is cleared or
-  reinstalled (or the public key changes).
 
 ## Debugging (safe snapshot + logging)
 

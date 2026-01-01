@@ -1,6 +1,7 @@
 import 'dart:async';
 
 export 'src/connect_ui.dart';
+export 'src/ui/connect_prompt.dart';
 export 'src/models.dart' show DebugSnapshot, MyAppCrewConnectResult;
 
 import 'package:device_info_plus/device_info_plus.dart';
@@ -22,7 +23,7 @@ import 'src/utils.dart';
 
 /// MyAppCrew SDK entry point.
 class MyAppCrewFlutter {
-  static const String _sdkVersion = '0.1.5';
+  static const String _sdkVersion = '0.1.7';
   static const int _maxBatchSize = 50;
   static const String _defaultBaseUrl = 'https://myappcrew-tw.pages.dev';
   static const String _defaultIngestPath = '/api/v1/mobile/events/batch';

@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.7
+- Add debug-only connect prompt overlay widget.
+
 ## 0.1.6
 - Optional connect code UI wrapper (debug-only default) for auto prompt.
 
