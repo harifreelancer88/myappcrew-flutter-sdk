@@ -38,3 +38,13 @@ class MyAppCrewHttpResult {
   final Map<String, dynamic>? json;
   final String? rawBody;
 }
+
+class MyAppCrewConnectResult {
+  const MyAppCrewConnectResult({
+    required this.connected,
+    this.testerId,
+  });
+
+  final bool connected;
+  final String? testerId;
+}

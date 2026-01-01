@@ -17,11 +17,14 @@ import 'src/storage.dart';
 import 'src/utils.dart';
 
 /// MyAppCrew SDK entry point.
-class MyAppCrew {
-  static const String _sdkVersion = '0.1.0';
+class MyAppCrewFlutter {
+  static const String _sdkVersion = '0.1.3';
   static const int _maxBatchSize = 50;
-  static const bool _enableInviteClaim = false;
+  static const String _defaultBaseUrl = 'https://myappcrew-tw.pages.dev';
   static const String _defaultIngestPath = '/api/v1/mobile/events/batch';
+  static const Duration _defaultTimeout = Duration(seconds: 8);
+  static const int _defaultFlushAt = 10;
+  static const Duration _defaultFlushInterval = Duration(seconds: 12);
 
   static final Uuid _uuid = const Uuid();
 
@@ -39,145 +42,111 @@ class MyAppCrew {
   static String? _currentScreen;
   static String? _ingestUrl;
   static String? _lastError;
+  static int? _lastBootstrapAt;
+  static int? _lastFlushAt;
   static bool _isInitialized = false;
+  static bool _isEnabled = false;
   static bool _isFlushing = false;
   static bool _rebootstrapAttempted = false;
+  static bool _disabledLogEmitted = false;
 
   static Map<String, dynamic> _appContext = <String, dynamic>{};
 
-  /// Returns the current testerId, if available.
-  static String? get testerId => _testerId;
+  /// Whether initialize has completed (even if disabled).
+  static bool get isInitialized => _isInitialized;
 
-  /// Loads the testerId from storage if needed.
-  static Future<String?> getTesterId() async {
-    if (_testerId != null && _testerId!.isNotEmpty) {
-      return _testerId;
-    }
-    try {
-      final storage = _storage ?? MyAppCrewStorage();
-      final auth = await storage.loadAuth();
-      if (auth != null && auth.testerId.isNotEmpty) {
-        _testerId = auth.testerId;
-      }
-    } catch (_) {}
-    return _testerId;
-  }
-
-  /// Returns the current sessionId, if available.
-  static String? get sessionId => _sessionId;
+  /// Whether the SDK is enabled (publicKey present + bootstrap success).
+  static bool get isEnabled => _isEnabled;
 
   /// Returns a safe snapshot of SDK state for debugging.
-  static Future<Map<String, dynamic>> debugSnapshot() async {
-    final publicKey = _config?.publicKey;
-    final testerId = _testerId;
-    final ingestUrl = _ingestUrl;
-
+  static Map<String, dynamic> debugSnapshot() {
+    final publicKey = _config?.publicKey ?? '';
+    final suffix = publicKey.isEmpty
+        ? 'unavailable'
+        : publicKey.length <= 4
+            ? publicKey
+            : publicKey.substring(publicKey.length - 4);
     return <String, dynamic>{
-      'baseUrl': _config?.baseUrl ?? 'unavailable',
-      'publicKey': publicKey ?? 'unavailable',
-      'testerId': (testerId != null && testerId.isNotEmpty)
-          ? testerId
-          : 'unavailable',
-      'hasToken': _accessToken != null && _accessToken!.isNotEmpty,
-      'ingestUrl': (ingestUrl != null && ingestUrl.isNotEmpty)
-          ? ingestUrl
-          : 'unavailable',
+      'publicKeySuffix': suffix,
+      'testerId': _testerId ?? 'unavailable',
+      'ingestUrl': _ingestUrl ?? 'unavailable',
       'lastError': _lastError,
+      'lastBootstrapAt': _lastBootstrapAt,
+      'lastFlushAt': _lastFlushAt,
+      'queueSize': _queue?.length ?? 0,
     };
   }
 
-  /// Clears stored auth and in-memory auth state.
-  static Future<void> resetAuth() async {
-    try {
-      final storage = _storage ?? MyAppCrewStorage();
-      await storage.clearAuth();
-    } catch (_) {}
-    _accessToken = null;
-    _testerId = null;
-    _ingestUrl = null;
-    _lastError = null;
-  }
-
-  /// Whether initialize has completed successfully.
-  static bool get isInitialized => _isInitialized;
-
   /// Initialize the SDK.
-  static Future<MyAppCrewInitResult> initialize({
-    required String publicKey,
-    required String baseUrl,
-    String? appVersion,
-    String? buildNumber,
-    String? inviteCode,
-    String? inviteId,
-    String? nickname,
-    String? email,
-    bool debugLogs = true,
-    Duration timeout = const Duration(seconds: 8),
-    int flushAt = 10,
-    Duration flushInterval = const Duration(seconds: 12),
-    bool forceRebootstrap = false,
+  static Future<void> init({
+    String? publicKey,
+    String? baseUrl,
+    bool enableLogs = kDebugMode,
   }) async {
-    try {
-      final normalizedBaseUrl = normalizeBaseUrl(baseUrl);
-      _config = MyAppCrewConfig(
-        publicKey: publicKey,
-        baseUrl: normalizedBaseUrl,
-        appVersion: appVersion,
-        buildNumber: buildNumber,
-        inviteCode: inviteCode,
-        debugLogs: debugLogs,
-        timeout: timeout,
-        flushAt: flushAt,
-        flushInterval: flushInterval,
-        forceRebootstrap: forceRebootstrap,
-        inviteId: inviteId,
-        nickname: nickname,
-        email: email,
-      );
-      _logger = MyAppCrewLogger(debugLogs);
-      _client = MyAppCrewClient(timeout: timeout, logger: _logger!);
-      _storage ??= MyAppCrewStorage();
-      _queue ??= MyAppCrewQueue();
-      _ensureSessionId();
-      _appContext = await _loadAppContext();
+    final normalizedBaseUrl = normalizeBaseUrl(baseUrl ?? _defaultBaseUrl);
+    final trimmedKey = publicKey?.trim() ?? '';
 
-      _logger?.log('initialize start');
-      final persisted = await _storage?.loadAuth();
-      if (!_isInviteMode() && !forceRebootstrap && _isAuthReusable(persisted)) {
-        _accessToken = persisted?.accessToken;
-        _testerId = persisted?.testerId;
-        _ingestUrl = persisted?.ingestUrl ?? _defaultIngestPath;
-        _isInitialized = true;
-        _startObservers();
-        _logger?.log('initialize ok (cached)');
-        return MyAppCrewInitResult.ok();
-      }
+    _config = MyAppCrewConfig(
+      publicKey: trimmedKey,
+      baseUrl: normalizedBaseUrl,
+      debugLogs: enableLogs,
+      timeout: _defaultTimeout,
+      flushAt: _defaultFlushAt,
+      flushInterval: _defaultFlushInterval,
+      forceRebootstrap: false,
+    );
+    _logger ??= MyAppCrewLogger(enableLogs);
+    _client ??= MyAppCrewClient(timeout: _defaultTimeout, logger: _logger!);
+    _storage ??= MyAppCrewStorage();
+    _queue ??= MyAppCrewQueue();
+    _ensureSessionId();
+    _appContext = await _loadAppContext();
 
-      final initOk = _isInviteMode() ? await _claim() : await _bootstrap();
-      if (!initOk) {
-        _isInitialized = false;
-        _startObservers();
-        _lastError = _isInviteMode() ? 'claim_failed' : 'bootstrap_failed';
-        _logger?.log('initialize failed');
-        return MyAppCrewInitResult.fail(
-          _isInviteMode() ? 'claim_failed' : 'bootstrap_failed',
-        );
-      }
+    _isInitialized = false;
+    _isEnabled = false;
+    _lastError = null;
 
+    if (trimmedKey.isEmpty) {
+      _accessToken = null;
+      _testerId = null;
+      _ingestUrl = null;
+      _lastError = 'missing_public_key';
+      _emitDisabledLogOnce();
       _isInitialized = true;
+      _startObservers();
+      return;
+    }
+
+    _logger?.log('init start');
+    final persisted = await _storage?.loadAuth();
+    if (!_config!.forceRebootstrap && _isAuthReusable(persisted)) {
+      _accessToken = persisted?.accessToken;
+      _testerId = persisted?.testerId;
+      _ingestUrl = persisted?.ingestUrl ?? _defaultIngestPath;
+      _isInitialized = true;
+      _isEnabled = true;
       _lastError = null;
       _startObservers();
-      _logger?.log('initialize ok');
-      return MyAppCrewInitResult.ok();
-    } catch (_) {
-      _lastError = 'initialize_exception';
-      _logger?.log('initialize exception');
-      return MyAppCrewInitResult.fail('initialize_exception');
+      logEvent('app_open');
+      _logger?.log('init ok (cached)');
+      return;
     }
+
+    final ok = await _bootstrap();
+    _isInitialized = true;
+    _isEnabled = ok;
+    _startObservers();
+    logEvent('app_open');
+    if (!ok) {
+      _lastError ??= 'bootstrap_failed';
+      _logger?.log('init failed');
+      return;
+    }
+    _logger?.log('init ok');
   }
 
-  /// Log an event. Safe to call before initialize.
-  static void logEvent(String name, {Map<String, dynamic>? properties}) {
+  /// Log an event. Safe to call before init.
+  static void logEvent(String name, {Map<String, dynamic>? params}) {
     try {
       _queue ??= MyAppCrewQueue();
       _ensureSessionId();
@@ -194,13 +163,11 @@ class MyAppCrew {
       if (_currentScreen != null) {
         event['screen'] = _currentScreen;
       }
-
       if (_appContext.isNotEmpty) {
         event.addAll(_appContext);
       }
-
-      if (properties != null && properties.isNotEmpty) {
-        event['properties'] = properties;
+      if (params != null && params.isNotEmpty) {
+        event['properties'] = params;
       }
 
       _queue?.add(event);
@@ -216,12 +183,8 @@ class MyAppCrew {
   }
 
   /// Navigator observer for auto screen tracking.
-  static NavigatorObserver navigatorObserver({
-    String? unknownRouteNameFallback,
-  }) {
-    final fallback = unknownRouteNameFallback ?? 'unknown';
+  static NavigatorObserver get navigatorObserver {
     return MyAppCrewNavigatorObserver(
-      unknownRouteNameFallback: fallback,
       onScreenChange: (screen) {
         _currentScreen = screen;
         logEvent('screen_view');
@@ -229,8 +192,76 @@ class MyAppCrew {
     );
   }
 
+  /// Connect using a claim token.
+  static Future<MyAppCrewConnectResult> connectWithClaimToken(
+    String claimToken,
+  ) async {
+    final token = claimToken.trim();
+    if (token.isEmpty) {
+      _lastError = 'claim_token_missing';
+      return const MyAppCrewConnectResult(connected: false);
+    }
+    if (_config == null) {
+      _lastError = 'not_initialized';
+      return const MyAppCrewConnectResult(connected: false);
+    }
+    if (!_hasPublicKey) {
+      _lastError = 'missing_public_key';
+      _emitDisabledLogOnce();
+      return const MyAppCrewConnectResult(connected: false);
+    }
+
+    if (_accessToken == null || _accessToken!.isEmpty) {
+      final ok = await _bootstrap();
+      if (!ok) {
+        _isEnabled = false;
+        return const MyAppCrewConnectResult(connected: false);
+      }
+    }
+
+    _rebootstrapAttempted = false;
+    var result = await _postClaim(token);
+    if (result.statusCode == 401 && !_rebootstrapAttempted) {
+      _rebootstrapAttempted = true;
+      final ok = await _bootstrap();
+      if (ok) {
+        result = await _postClaim(token);
+      }
+    }
+
+    return _applyClaimResult(result);
+  }
+
+  /// Connect using text that may include a claim token or URL.
+  static Future<MyAppCrewConnectResult> connectFromText(String input) async {
+    final token = parseClaimToken(input);
+    if (token == null || token.isEmpty) {
+      _lastError = 'claim_token_missing';
+      return const MyAppCrewConnectResult(connected: false);
+    }
+    return connectWithClaimToken(token);
+  }
+
   static void _ensureSessionId() {
     _sessionId ??= _uuid.v4();
+  }
+
+  static bool get _hasPublicKey {
+    final publicKey = _config?.publicKey;
+    return publicKey != null && publicKey.trim().isNotEmpty;
+  }
+
+  static void _emitDisabledLogOnce() {
+    if (_disabledLogEmitted) {
+      return;
+    }
+    _disabledLogEmitted = true;
+    if (_config?.debugLogs ?? false) {
+      _logger?.log(
+        'MyAppCrew disabled: missing publicKey. '
+        'Paste your key into MyAppCrewFlutter.init(publicKey: ...)',
+      );
+    }
   }
 
   static bool _isAuthReusable(MyAppCrewAuth? auth) {
@@ -242,26 +273,13 @@ class MyAppCrew {
         auth.accessToken.isNotEmpty;
   }
 
-  static bool _isInviteMode() {
-    final inviteId = _config?.inviteId;
-    return inviteId != null && inviteId.trim().isNotEmpty;
-  }
-
   static Future<Map<String, dynamic>> _loadAppContext() async {
     final context = <String, dynamic>{};
     try {
       final info = await PackageInfo.fromPlatform();
       context['packageName'] = info.packageName;
-      if (_config?.appVersion != null) {
-        context['appVersion'] = _config!.appVersion;
-      } else {
-        context['appVersion'] = info.version;
-      }
-      if (_config?.buildNumber != null) {
-        context['buildNumber'] = _config!.buildNumber;
-      } else {
-        context['buildNumber'] = info.buildNumber;
-      }
+      context['appVersion'] = info.version;
+      context['buildNumber'] = info.buildNumber;
     } catch (_) {}
 
     try {
@@ -331,7 +349,11 @@ class MyAppCrew {
       }
       _lifecycleObserver = MyAppCrewLifecycleObserver(
         onBackground: () {
+          logEvent('app_background');
           unawaited(_flush('lifecycle'));
+        },
+        onForeground: () {
+          logEvent('app_foreground');
         },
       );
       binding.addObserver(_lifecycleObserver!);
@@ -353,7 +375,10 @@ class MyAppCrew {
         payload.addAll(_appContext);
       }
 
-      final url = '${_config!.baseUrl}/api/v1/mobile/bootstrap';
+      final url = joinBaseUrlAndPath(
+        _config!.baseUrl,
+        '/api/v1/mobile/bootstrap',
+      );
       final result = await _client!.postJson(url, payload);
       final token = firstStringKey(result.json, <String>[
         'accessToken',
@@ -373,17 +398,20 @@ class MyAppCrew {
       if (result.statusCode < 200 || result.statusCode >= 300) {
         _lastError = 'bootstrap_failed_${result.statusCode}';
         _logger?.log('bootstrap failed (${result.statusCode})');
+        _isEnabled = false;
         return false;
       }
       if (token == null || testerId == null) {
         _lastError = 'bootstrap_missing_fields';
         _logger?.log('bootstrap missing fields');
+        _isEnabled = false;
         return false;
       }
 
       _accessToken = token;
       _testerId = testerId;
       _ingestUrl = ingestUrl ?? _defaultIngestPath;
+      _lastBootstrapAt = unixSeconds();
       await _storage!.saveAuth(
         MyAppCrewAuth(
           baseUrl: _config!.baseUrl,
@@ -395,93 +423,76 @@ class MyAppCrew {
         ),
       );
 
-      if (_enableInviteClaim && _config!.inviteCode != null) {
-        await _claimInvite(_config!.inviteCode!);
-      }
-
-      _logger?.log('using ingestUrl: $_ingestUrl');
       _logger?.log('bootstrap ok');
       _lastError = null;
+      _isEnabled = true;
       return true;
     } catch (_) {
       _lastError = 'bootstrap_exception';
       _logger?.log('bootstrap exception');
+      _isEnabled = false;
       return false;
     }
   }
 
-  static Future<void> _claimInvite(String inviteCode) async {
+  static Future<MyAppCrewHttpResult> _postClaim(String claimToken) async {
     if (_client == null || _config == null || _accessToken == null) {
-      return;
+      return const MyAppCrewHttpResult(statusCode: 0);
     }
     try {
-      final url = '${_config!.baseUrl}/api/v1/mobile/claim';
-      await _client!.postJson(
-        url,
-        <String, dynamic>{'inviteCode': inviteCode, 'ts': unixSeconds()},
-        headers: <String, String>{'Authorization': 'Bearer $_accessToken'},
-      );
-    } catch (_) {}
-  }
-
-  static Future<bool> _claim() async {
-    if (_config == null || _client == null || _storage == null) {
-      return false;
-    }
-    final inviteId = _config!.inviteId?.trim();
-    if (inviteId == null || inviteId.isEmpty) {
-      return false;
-    }
-    try {
-      _logger?.log('claim start');
       final payload = <String, dynamic>{
-        'inviteId': inviteId,
+        'claimToken': claimToken,
         'ts': unixSeconds(),
         'sdkVersion': _sdkVersion,
       };
       if (_appContext.isNotEmpty) {
         payload.addAll(_appContext);
       }
-      final nickname = _config!.nickname?.trim();
-      if (nickname != null && nickname.isNotEmpty) {
-        payload['nickname'] = nickname;
-      }
-      final email = _config!.email?.trim();
-      if (email != null && email.isNotEmpty) {
-        payload['email'] = email;
-      }
+      final url = joinBaseUrlAndPath(_config!.baseUrl, '/api/v1/mobile/claim');
+      return _client!.postJson(
+        url,
+        payload,
+        headers: <String, String>{'Authorization': 'Bearer $_accessToken'},
+      );
+    } catch (_) {
+      return const MyAppCrewHttpResult(statusCode: 0);
+    }
+  }
 
-      final url = '${_config!.baseUrl}/api/v1/mobile/claim';
-      final result = await _client!.postJson(url, payload);
-      final token = firstStringKey(result.json, <String>[
-        'accessToken',
-        'access_token',
-        'token',
-        'jwt',
-      ]);
-      final testerId = firstStringKey(result.json, <String>[
-        'testerId',
-        'tester_id',
-        'id',
-      ]);
-      final ingestUrl = firstStringKey(result.json, <String>[
-        'ingestUrl',
-        'ingest_url',
-      ]);
-      if (result.statusCode < 200 || result.statusCode >= 300) {
-        _lastError = 'claim_failed_${result.statusCode}';
-        _logger?.log('claim failed (${result.statusCode})');
-        return false;
-      }
-      if (token == null || testerId == null) {
-        _lastError = 'claim_missing_fields';
-        _logger?.log('claim missing fields');
-        return false;
-      }
+  static Future<MyAppCrewConnectResult> _applyClaimResult(
+    MyAppCrewHttpResult result,
+  ) async {
+    if (result.statusCode < 200 || result.statusCode >= 300) {
+      _lastError = 'claim_failed_${result.statusCode}';
+      _logger?.log('claim failed (${result.statusCode})');
+      return const MyAppCrewConnectResult(connected: false);
+    }
 
-      _accessToken = token;
-      _testerId = testerId;
-      _ingestUrl = ingestUrl ?? _defaultIngestPath;
+    final token = firstStringKey(result.json, <String>[
+      'accessToken',
+      'access_token',
+      'token',
+      'jwt',
+    ]);
+    final testerId = firstStringKey(result.json, <String>[
+      'testerId',
+      'tester_id',
+      'id',
+    ]);
+    final ingestUrl = firstStringKey(result.json, <String>[
+      'ingestUrl',
+      'ingest_url',
+    ]);
+    if (token == null || testerId == null) {
+      _lastError = 'claim_missing_fields';
+      _logger?.log('claim missing fields');
+      return const MyAppCrewConnectResult(connected: false);
+    }
+
+    _accessToken = token;
+    _testerId = testerId;
+    _ingestUrl = ingestUrl ?? _defaultIngestPath;
+    if (_storage != null && _config != null) {
       await _storage!.saveAuth(
         MyAppCrewAuth(
           baseUrl: _config!.baseUrl,
@@ -492,16 +503,15 @@ class MyAppCrew {
           savedAtSeconds: unixSeconds(),
         ),
       );
-
-      _logger?.log('using ingestUrl: $_ingestUrl');
-      _logger?.log('claim ok');
-      _lastError = null;
-      return true;
-    } catch (_) {
-      _lastError = 'claim_exception';
-      _logger?.log('claim exception');
-      return false;
     }
+    _isEnabled = true;
+    _lastError = null;
+
+    if (_queue != null && _queue!.length > 0) {
+      unawaited(flushNow());
+    }
+
+    return MyAppCrewConnectResult(connected: true, testerId: testerId);
   }
 
   static Future<void> _flush(String reason) async {
@@ -523,6 +533,7 @@ class MyAppCrew {
       final success = await _sendWithRetry(batch);
       if (success) {
         _queue!.removeFirst(batch.length);
+        _lastFlushAt = unixSeconds();
         _logger?.log('flush ok (${batch.length})');
       } else {
         _logger?.log('flush failed (${batch.length})');
@@ -565,7 +576,7 @@ class MyAppCrew {
       return false;
     }
     _rebootstrapAttempted = true;
-    final ok = _isInviteMode() ? await _claim() : await _bootstrap();
+    final ok = await _bootstrap();
     if (!ok) {
       return false;
     }
@@ -598,6 +609,78 @@ class MyAppCrew {
       return _SendResult.failed;
     }
   }
+
+  @visibleForTesting
+  static void setClientForTesting(MyAppCrewClient client) {
+    _client = client;
+  }
+
+  @visibleForTesting
+  static void resetForTesting() {
+    _config = null;
+    _logger = null;
+    _client = null;
+    _storage = null;
+    _queue = null;
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    _lifecycleObserver = null;
+    _accessToken = null;
+    _testerId = null;
+    _sessionId = null;
+    _currentScreen = null;
+    _ingestUrl = null;
+    _lastError = null;
+    _lastBootstrapAt = null;
+    _lastFlushAt = null;
+    _isInitialized = false;
+    _isEnabled = false;
+    _isFlushing = false;
+    _rebootstrapAttempted = false;
+    _disabledLogEmitted = false;
+    _appContext = <String, dynamic>{};
+  }
+}
+
+@Deprecated('Use MyAppCrewFlutter instead.')
+class MyAppCrew {
+  static Future<void> init({
+    String? publicKey,
+    String? baseUrl,
+    bool enableLogs = kDebugMode,
+  }) =>
+      MyAppCrewFlutter.init(
+        publicKey: publicKey,
+        baseUrl: baseUrl,
+        enableLogs: enableLogs,
+      );
+
+  static Future<void> initialize({
+    required String publicKey,
+    required String baseUrl,
+    bool debugLogs = true,
+  }) =>
+      MyAppCrewFlutter.init(
+        publicKey: publicKey,
+        baseUrl: baseUrl,
+        enableLogs: debugLogs,
+      );
+
+  static bool get isInitialized => MyAppCrewFlutter.isInitialized;
+  static bool get isEnabled => MyAppCrewFlutter.isEnabled;
+  static Map<String, dynamic> debugSnapshot() =>
+      MyAppCrewFlutter.debugSnapshot();
+  static NavigatorObserver get navigatorObserver =>
+      MyAppCrewFlutter.navigatorObserver;
+  static void logEvent(String name, {Map<String, dynamic>? params}) =>
+      MyAppCrewFlutter.logEvent(name, params: params);
+  static Future<void> flushNow() => MyAppCrewFlutter.flushNow();
+  static Future<MyAppCrewConnectResult> connectWithClaimToken(
+    String claimToken,
+  ) =>
+      MyAppCrewFlutter.connectWithClaimToken(claimToken);
+  static Future<MyAppCrewConnectResult> connectFromText(String input) =>
+      MyAppCrewFlutter.connectFromText(input);
 }
 
 enum _SendResult { success, failed, unauthorized }

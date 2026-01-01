@@ -17,7 +17,10 @@ String joinBaseUrlAndPath(String baseUrl, String path) {
     return trimmed;
   }
   final normalizedBase = normalizeBaseUrl(baseUrl);
-  final normalizedPath = trimmed.startsWith('/') ? trimmed : '/$trimmed';
+  var normalizedPath = trimmed.startsWith('/') ? trimmed : '/$trimmed';
+  if (normalizedBase.endsWith('/api') && normalizedPath.startsWith('/api/')) {
+    normalizedPath = normalizedPath.substring('/api'.length);
+  }
   return '$normalizedBase$normalizedPath';
 }
 
@@ -42,4 +45,28 @@ String? firstStringKey(Map<String, dynamic>? map, List<String> keys) {
     }
   }
   return null;
+}
+
+String? parseClaimToken(String input) {
+  final trimmed = input.trim();
+  if (trimmed.isEmpty) {
+    return null;
+  }
+
+  final uri = Uri.tryParse(trimmed);
+  if (uri != null && (uri.hasScheme || trimmed.contains('?'))) {
+    final queryToken = uri.queryParameters['claimToken'] ??
+        uri.queryParameters['claim_token'];
+    if (queryToken != null && queryToken.isNotEmpty) {
+      return queryToken;
+    }
+    if (uri.pathSegments.isNotEmpty) {
+      final last = uri.pathSegments.last.trim();
+      if (last.isNotEmpty) {
+        return last;
+      }
+    }
+  }
+
+  return trimmed;
 }

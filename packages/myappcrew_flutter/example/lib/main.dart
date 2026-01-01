@@ -5,57 +5,33 @@ import 'package:myappcrew_flutter/myappcrew_flutter.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  const baseUrl = String.fromEnvironment(
-    'MYAPPCREW_BASE_URL',
-    defaultValue: 'https://myappcrew-tw.pages.dev',
-  );
   const publicKey = String.fromEnvironment(
     'MYAPPCREW_PUBLIC_KEY',
     defaultValue: 'com.test_app.test',
   );
-  const inviteId = String.fromEnvironment(
-    'MYAPPCREW_INVITE_ID',
-    defaultValue: '',
+  const baseUrl = String.fromEnvironment(
+    'MYAPPCREW_BASE_URL',
+    defaultValue: 'https://myappcrew-tw.pages.dev',
   );
 
-  final result = await MyAppCrew.initialize(
+  await MyAppCrewFlutter.init(
     publicKey: publicKey,
     baseUrl: baseUrl,
-    inviteId: inviteId.isEmpty ? null : inviteId,
   );
 
-  runApp(
-    MyAppCrewExampleApp(
-      initOk: result.ok,
-      baseUrl: baseUrl,
-      publicKey: publicKey,
-    ),
-  );
+  runApp(const MyAppCrewExampleApp());
 }
 
 class MyAppCrewExampleApp extends StatelessWidget {
-  const MyAppCrewExampleApp({
-    super.key,
-    required this.initOk,
-    required this.baseUrl,
-    required this.publicKey,
-  });
-
-  final bool initOk;
-  final String baseUrl;
-  final String publicKey;
+  const MyAppCrewExampleApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'MyAppCrew Example',
-      navigatorObservers: [MyAppCrew.navigatorObserver()],
+      navigatorObservers: [MyAppCrewFlutter.navigatorObserver],
       routes: <String, WidgetBuilder>{
-        '/': (_) => HomeScreen(
-              initOk: initOk,
-              baseUrl: baseUrl,
-              publicKey: publicKey,
-            ),
+        '/': (_) => const HomeScreen(),
         '/profile': (_) => const ProfileScreen(),
         '/checkout': (_) => const CheckoutScreen(),
       },
@@ -65,77 +41,25 @@ class MyAppCrewExampleApp extends StatelessWidget {
 }
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({
-    super.key,
-    required this.initOk,
-    required this.baseUrl,
-    required this.publicKey,
-  });
-
-  final bool initOk;
-  final String baseUrl;
-  final String publicKey;
+  const HomeScreen({super.key});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final TextEditingController _inviteController = TextEditingController();
-  String? _testerId;
-  String? _sessionId;
   Map<String, dynamic>? _snapshot;
-  bool _initOk = false;
 
   @override
   void initState() {
     super.initState();
-    _initOk = widget.initOk;
-    _refreshIds();
     _refreshSnapshot();
   }
 
-  void _refreshIds() {
+  void _refreshSnapshot() {
     setState(() {
-      _testerId = MyAppCrew.testerId;
-      _sessionId = MyAppCrew.sessionId;
+      _snapshot = MyAppCrewFlutter.debugSnapshot();
     });
-  }
-
-  Future<void> _refreshSnapshot() async {
-    final snapshot = await MyAppCrew.debugSnapshot();
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _snapshot = snapshot;
-    });
-  }
-
-  Future<void> _claimInvite() async {
-    final inviteId = _inviteController.text.trim();
-    if (inviteId.isEmpty) {
-      return;
-    }
-    final result = await MyAppCrew.initialize(
-      publicKey: widget.publicKey,
-      baseUrl: widget.baseUrl,
-      inviteId: inviteId,
-    );
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _initOk = result.ok;
-    });
-    _refreshIds();
-    _refreshSnapshot();
-  }
-
-  @override
-  void dispose() {
-    _inviteController.dispose();
-    super.dispose();
   }
 
   @override
@@ -146,41 +70,26 @@ class _HomeScreenState extends State<HomeScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: <Widget>[
-          Text('Initialized: ${_initOk ? 'yes' : 'no'}'),
-          const SizedBox(height: 8),
-          Text('Tester ID: ${_testerId ?? '-'}'),
-          Text('Session ID: ${_sessionId ?? '-'}'),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _inviteController,
-            decoration: const InputDecoration(
-              labelText: 'Invite ID (optional)',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 8),
-          ElevatedButton(
-            onPressed: _claimInvite,
-            child: const Text('Claim Invite'),
-          ),
+          Text('Initialized: ${MyAppCrewFlutter.isInitialized ? 'yes' : 'no'}'),
+          Text('Enabled: ${MyAppCrewFlutter.isEnabled ? 'yes' : 'no'}'),
           const SizedBox(height: 16),
           if (snapshot != null) ...<Widget>[
             const Text('Snapshot'),
             const SizedBox(height: 8),
-            Text('Base URL: ${snapshot['baseUrl'] ?? '-'}'),
-            Text('Public Key: ${snapshot['publicKey'] ?? '-'}'),
+            Text('Public Key Suffix: ${snapshot['publicKeySuffix'] ?? '-'}'),
             Text('Tester ID: ${snapshot['testerId'] ?? '-'}'),
-            Text('Has Token: ${snapshot['hasToken'] ?? '-'}'),
             Text('Ingest URL: ${snapshot['ingestUrl'] ?? '-'}'),
             Text('Last Error: ${snapshot['lastError'] ?? '-'}'),
+            Text('Last Bootstrap: ${snapshot['lastBootstrapAt'] ?? '-'}'),
+            Text('Last Flush: ${snapshot['lastFlushAt'] ?? '-'}'),
+            Text('Queue Size: ${snapshot['queueSize'] ?? '-'}'),
             const SizedBox(height: 16),
           ],
           ElevatedButton(
             onPressed: () {
-              MyAppCrew.logEvent('home_cta', properties: {
+              MyAppCrewFlutter.logEvent('home_cta', params: {
                 'label': 'Get Started',
               });
-              _refreshIds();
               _refreshSnapshot();
             },
             child: const Text('Log Event'),
@@ -196,8 +105,7 @@ class _HomeScreenState extends State<HomeScreen> {
           if (kDebugMode)
             OutlinedButton(
               onPressed: () async {
-                await MyAppCrew.flushNow();
-                _refreshIds();
+                await MyAppCrewFlutter.flushNow();
                 _refreshSnapshot();
               },
               child: const Text('Flush Now (debug)'),
@@ -223,7 +131,7 @@ class ProfileScreen extends StatelessWidget {
             const SizedBox(height: 12),
             ElevatedButton(
               onPressed: () {
-                MyAppCrew.logEvent('profile_save');
+                MyAppCrewFlutter.logEvent('profile_save');
               },
               child: const Text('Log Event'),
             ),
@@ -253,7 +161,7 @@ class CheckoutScreen extends StatelessWidget {
             const SizedBox(height: 12),
             ElevatedButton(
               onPressed: () {
-                MyAppCrew.logEvent('checkout_submit');
+                MyAppCrewFlutter.logEvent('checkout_submit');
               },
               child: const Text('Log Event'),
             ),

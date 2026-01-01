@@ -7,25 +7,17 @@ class MyAppCrewConfig {
     required this.flushAt,
     required this.flushInterval,
     required this.forceRebootstrap,
-    this.inviteId,
-    this.nickname,
-    this.email,
     this.appVersion,
     this.buildNumber,
-    this.inviteCode,
   });
 
   final String publicKey;
   final String baseUrl;
   final String? appVersion;
   final String? buildNumber;
-  final String? inviteCode;
   final bool debugLogs;
   final Duration timeout;
   final int flushAt;
   final Duration flushInterval;
   final bool forceRebootstrap;
-  final String? inviteId;
-  final String? nickname;
-  final String? email;
 }

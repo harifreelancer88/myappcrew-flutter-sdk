@@ -1,97 +1,56 @@
 # MyAppCrew Flutter SDK
 
-A tiny Flutter SDK to bootstrap tester sessions, queue events, auto-track screens, and flush batches safely.
+Tiny SDK for bootstrapping testers, tracking lifecycle/screen events, and batching events.
 
-## Install (pub.dev)
+## 2-minute install (minimum)
+
+1) Add dependency:
 
 ```sh
 flutter pub add myappcrew_flutter
 ```
 
-## Install (path dependency)
-
-Option A: path dependency
-
-```yaml
-dependencies:
-  myappcrew_flutter:
-    path: ../myappcrew_flutter_sdk/packages/myappcrew_flutter
-```
-
-## Minimal usage
+2) Initialize once in `main.dart`:
 
 ```dart
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  final result = await MyAppCrew.initialize(
-    publicKey: 'YOUR_PUBLIC_KEY',
-    baseUrl: 'https://api.myappcrew.com',
-  );
+  await MyAppCrewFlutter.init(publicKey: 'YOUR_PUBLIC_KEY');
 
-  runApp(
-    MaterialApp(
-      navigatorObservers: [
-        MyAppCrew.navigatorObserver(),
-      ],
-      home: const MyHomePage(),
-    ),
-  );
-
-  if (result.ok) {
-    MyAppCrew.logEvent('button_click', properties: {
-      'label': 'Subscribe',
-    });
-    await MyAppCrew.flushNow();
-  }
+  runApp(const MyApp());
 }
 ```
 
-## Invite claim usage
+Notes:
+- `baseUrl` is optional and defaults to `https://myappcrew-tw.pages.dev`.
+- If `publicKey` is missing, the SDK disables itself (no network calls).
+
+## Optional: screen tracking
+
+Add the navigator observer when you want screen tracking:
 
 ```dart
-final result = await MyAppCrew.initialize(
-  publicKey: 'YOUR_PUBLIC_KEY',
-  baseUrl: 'https://api.myappcrew.com',
-  inviteId: 'YOUR_INVITE_ID',
-  nickname: 'Ada Lovelace',
-  email: 'ada@example.com',
+MaterialApp(
+  navigatorObservers: [MyAppCrewFlutter.navigatorObserver],
+  home: const MyHomePage(),
 );
 ```
 
-## Configuration via --dart-define
+## Tester connect (no deep links)
 
-```sh
-flutter run -d <device> \
-  --dart-define=MYAPPCREW_BASE_URL=https://myappcrew-tw.pages.dev \
-  --dart-define=MYAPPCREW_PUBLIC_KEY=com.test_app.test \
-  --dart-define=MYAPPCREW_INVITE_ID=invite_123
-```
+1) Tester joins the invite in a browser.
+2) Copy the claim token or full claim link.
+3) In-app, call `connectFromText(...)` (token or URL both work):
 
-## Data sent
-
-- `name`
-- `ts` (seconds)
-- `screen`
-- `sessionId`
-- `properties`
-
-## Notes
-
-- `baseUrl` is required and must not assume localhost.
-- `ingestUrl` comes from the bootstrap response and may change server-side.
-- All event timestamps use UNIX seconds (10-digit).
-- Retries use small backoff; no infinite loops.
-- SDK is best-effort and should not crash the host app.
-
-## Example app
-
-An example app is available under `example/`.
-
-```sh
-cd example
-flutter pub get
-flutter run -d <device> \
-  --dart-define=MYAPPCREW_BASE_URL=https://myappcrew-tw.pages.dev \
-  --dart-define=MYAPPCREW_PUBLIC_KEY=com.test_app.test
+```dart
+ElevatedButton(
+  onPressed: () async {
+    final result = await MyAppCrewFlutter.connectFromText(inputText);
+    if (result.connected) {
+      // Connected
+    }
+  },
+  child: const Text('Connect tester'),
+);
 ```
