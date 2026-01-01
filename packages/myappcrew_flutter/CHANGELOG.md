@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+- Simplified owner-facing `MyAppCrewFlutter` API with one-step `init`.
+- Disabled mode when `publicKey` is missing (no network calls).
+- Manual connect via claim token or link with a single 401 rebootstrap retry.
+- Safer debug snapshot plus lifecycle events and optional navigator observer.
+
 ## 0.1.2
 - Documentation and metadata touch-ups.
 - No runtime behavior changes.
