@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' show View;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
