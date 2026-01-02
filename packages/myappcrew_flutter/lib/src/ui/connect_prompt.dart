@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show View;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -13,13 +14,13 @@ typedef ConnectPromptConnectHandler = Future<MyAppCrewConnectResult> Function(
 
 class MyAppCrewConnectPrompt extends StatefulWidget {
   const MyAppCrewConnectPrompt({
-    required this.child,
+    this.child,
     super.key,
     this.debugOnly = true,
     this.showUntilConnected = true,
   });
 
-  final Widget child;
+  final Widget? child;
   final bool debugOnly;
   final bool showUntilConnected;
 
@@ -32,12 +33,15 @@ class MyAppCrewConnectPrompt extends StatefulWidget {
   State<MyAppCrewConnectPrompt> createState() => _MyAppCrewConnectPromptState();
 }
 
-class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
+class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt>
+    with WidgetsBindingObserver {
   static const Duration _pollInterval = Duration(seconds: 2);
   static const Duration _connectedBannerDuration = Duration(seconds: 2);
 
   final TextEditingController _controller = TextEditingController();
   final FocusNode _codeFocusNode = FocusNode();
+  OverlayEntry? _childEntry;
+  OverlayEntry? _promptEntry;
   Timer? _pollTimer;
   Timer? _connectedBannerTimer;
   DebugSnapshot? _snapshot;
@@ -51,8 +55,22 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _childEntry = OverlayEntry(builder: (_) {
+      return widget.child ?? const SizedBox.shrink();
+    });
+    _promptEntry = OverlayEntry(builder: _buildPromptEntry);
     unawaited(_refreshSnapshot());
     _ensurePolling();
+  }
+
+  @override
+  void didUpdateWidget(MyAppCrewConnectPrompt oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.child != widget.child) {
+      _childEntry?.markNeedsBuild();
+    }
+    _promptEntry?.markNeedsBuild();
   }
 
   @override
@@ -61,7 +79,15 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
     _connectedBannerTimer?.cancel();
     _controller.dispose();
     _codeFocusNode.dispose();
+    _childEntry?.remove();
+    _promptEntry?.remove();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    _promptEntry?.markNeedsBuild();
   }
 
   bool get _debugEnabled => !widget.debugOnly || kDebugMode;
@@ -154,6 +180,7 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
         _connectedBannerDismissed = false;
       }
     });
+    _markOverlayNeedsBuild();
     _ensurePolling();
   }
 
@@ -167,6 +194,7 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
         _showConnectedBanner = false;
         _connectedBannerDismissed = true;
       });
+      _markOverlayNeedsBuild();
       _ensurePolling();
     });
   }
@@ -181,6 +209,7 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
       setState(() {
         _errorText = 'Enter your 6-digit Connect Code.';
       });
+      _markOverlayNeedsBuild();
       return;
     }
 
@@ -188,6 +217,7 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
       _submitting = true;
       _errorText = null;
     });
+    _markOverlayNeedsBuild();
     _pollTimer?.cancel();
     _pollTimer = null;
 
@@ -204,6 +234,7 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
               'Connection failed. Try again.';
         }
       });
+      _markOverlayNeedsBuild();
       if (result.connected) {
         FocusScope.of(context).unfocus();
       }
@@ -215,6 +246,7 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
         _submitting = false;
         _errorText = 'Connection failed. Try again.';
       });
+      _markOverlayNeedsBuild();
     }
 
     if (mounted) {
@@ -229,6 +261,7 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
       _showConnectedBanner = false;
       _connectedBannerDismissed = true;
     });
+    _markOverlayNeedsBuild();
     _ensurePolling();
   }
 
@@ -239,60 +272,76 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
     setState(() {
       _promptDismissed = true;
     });
+    _markOverlayNeedsBuild();
     _ensurePolling();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (widget.child == null) {
+      return const SizedBox.shrink();
+    }
+    return Overlay(
+      initialEntries: <OverlayEntry>[
+        _childEntry!,
+        _promptEntry!,
+      ],
+    );
+  }
+
+  void _markOverlayNeedsBuild() {
+    _childEntry?.markNeedsBuild();
+    _promptEntry?.markNeedsBuild();
+  }
+
+  Widget _buildPromptEntry(BuildContext overlayContext) {
     final shouldShowPrompt = _shouldShowPrompt;
     final shouldShowConnected = _shouldShowConnectedBanner;
     if (!shouldShowPrompt && !shouldShowConnected) {
-      return widget.child;
+      return const SizedBox.shrink();
     }
 
-    final theme = Theme.of(context);
+    final theme = Theme.of(overlayContext);
 
-    return Stack(
-      children: <Widget>[
-        widget.child,
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: AnimatedPadding(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOut,
-            padding: EdgeInsets.only(
-              bottom: MediaQuery.of(context).viewInsets.bottom,
-            ),
-            child: SafeArea(
-              top: false,
-              minimum: const EdgeInsets.all(12),
-              child: Align(
-                alignment: Alignment.bottomCenter,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 520),
-                  child: Material(
-                    elevation: 6,
-                    color: theme.colorScheme.surface,
-                    borderRadius: BorderRadius.circular(12),
-                    child: SingleChildScrollView(
-                      physics: const ClampingScrollPhysics(),
-                      reverse: true,
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: shouldShowConnected
-                            ? _buildConnectedBanner(theme)
-                            : _buildPrompt(theme),
-                      ),
-                    ),
+    final view = View.of(overlayContext);
+    final bottomInset = MediaQueryData.fromView(view).viewInsets.bottom;
+
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: AnimatedPadding(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        padding: EdgeInsets.only(
+          bottom: bottomInset,
+        ),
+        child: SafeArea(
+          top: false,
+          minimum: const EdgeInsets.all(12),
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: Material(
+                elevation: 6,
+                color: theme.colorScheme.surface,
+                borderRadius: BorderRadius.circular(12),
+                child: SingleChildScrollView(
+                  physics: const ClampingScrollPhysics(),
+                  reverse: true,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: shouldShowConnected
+                        ? _buildConnectedBanner(theme)
+                        : _buildPrompt(theme),
                   ),
                 ),
               ),
             ),
           ),
         ),
-      ],
+      ),
     );
   }
 
@@ -349,33 +398,54 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
               setState(() {
                 _errorText = null;
               });
+              _markOverlayNeedsBuild();
             }
           },
           onSubmitted: (_) => _handleConnect(),
         ),
         const SizedBox(height: 12),
-        Row(
-          children: <Widget>[
-            Expanded(
-              child: ElevatedButton(
-                onPressed: _submitting ? null : _handleConnect,
-                child: _submitting
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Connect'),
-              ),
-            ),
-            if (!widget.showUntilConnected) ...<Widget>[
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: _submitting ? null : _dismissPrompt,
-                child: const Text('Not now'),
-              ),
-            ],
-          ],
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final useColumn = constraints.maxWidth < 360;
+            final connectButton = ElevatedButton(
+              onPressed: _submitting ? null : _handleConnect,
+              child: _submitting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Connect'),
+            );
+            final dismissButton = TextButton(
+              onPressed: _submitting ? null : _dismissPrompt,
+              child: const Text('Not now'),
+            );
+            if (useColumn) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  connectButton,
+                  if (!widget.showUntilConnected) ...<Widget>[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: dismissButton,
+                    ),
+                  ],
+                ],
+              );
+            }
+            return Row(
+              children: <Widget>[
+                Expanded(child: connectButton),
+                if (!widget.showUntilConnected) ...<Widget>[
+                  const SizedBox(width: 8),
+                  Flexible(child: dismissButton),
+                ],
+              ],
+            );
+          },
         ),
         if (errorMessage != null) ...<Widget>[
           const SizedBox(height: 8),

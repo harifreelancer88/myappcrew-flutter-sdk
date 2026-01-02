@@ -48,6 +48,35 @@ void main() {
     expect(find.text('Connect tester'), findsNothing);
   });
 
+  testWidgets('prompt supports text field overlay with navigator',
+      (tester) async {
+    MyAppCrewConnectPrompt.debugSnapshotProviderForTesting =
+        _disconnectedSnapshot;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MyAppCrewConnectPrompt(
+          child: Navigator(
+            onGenerateRoute: (_) {
+              return MaterialPageRoute<void>(
+                builder: (_) => const Scaffold(
+                  body: Text('home'),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump(const Duration(milliseconds: 10));
+    await tester.tap(find.byType(TextField));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), '123456');
+
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('submitting code does not throw', (tester) async {
     MyAppCrewConnectPrompt.debugSnapshotProviderForTesting =
         _disconnectedSnapshot;
@@ -96,7 +125,7 @@ void main() {
     final buttonRect = tester.getRect(buttonFinder);
     final logicalHeight =
         tester.view.physicalSize.height / tester.view.devicePixelRatio;
-    final bottomInset = tester.view.viewInsets.bottom;
+    final bottomInset = MediaQueryData.fromView(tester.view).viewInsets.bottom;
 
     expect(buttonRect.bottom, lessThanOrEqualTo(logicalHeight - bottomInset));
   });

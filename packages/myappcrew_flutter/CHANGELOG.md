@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.9
+- Fix connect prompt red flash (Overlay ancestor fix).
+
 ## 0.1.8
 - Fix connect prompt keyboard overlap and remove submit error flash.
 
