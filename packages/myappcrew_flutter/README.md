@@ -57,6 +57,23 @@ ElevatedButton(
 );
 ```
 
+## Tester identity persistence
+
+After a successful connect, the SDK stores the tester identity and reuses it on
+app relaunches for the same public key. If the identity is revoked or invalid,
+it is cleared and you can prompt the tester to reconnect.
+
+```dart
+MyAppCrewFlutter.setOnTesterIdentityInvalid((reason) {
+  // Show reconnect UI when a stored identity becomes invalid.
+});
+
+final connected = MyAppCrewFlutter.isTesterConnected();
+final tester = MyAppCrewFlutter.getConnectedTester();
+
+await MyAppCrewFlutter.disconnectTester();
+```
+
 ## Optional: connect prompt UI (debug-only by default)
 
 Auto-prompt testers for the 6-digit Connect Code without extra app state.

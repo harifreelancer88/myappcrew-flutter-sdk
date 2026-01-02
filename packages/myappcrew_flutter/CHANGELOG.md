@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.10
+- Persist connected tester identity across app restarts and attach it to events.
+- Add invalid identity handling with a reconnect callback.
+- Add tester identity API helpers.
+
 ## 0.1.9
 - Fix connect prompt red flash (Overlay ancestor fix).
 

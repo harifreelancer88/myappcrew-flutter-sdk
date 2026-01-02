@@ -2,7 +2,8 @@ import 'dart:async';
 
 export 'src/connect_ui.dart';
 export 'src/ui/connect_prompt.dart';
-export 'src/models.dart' show DebugSnapshot, MyAppCrewConnectResult;
+export 'src/models.dart'
+    show DebugSnapshot, MyAppCrewConnectResult, MyAppCrewTester;
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
@@ -19,11 +20,12 @@ import 'src/models.dart';
 import 'src/navigator_observer.dart';
 import 'src/queue.dart';
 import 'src/storage.dart';
+import 'src/tester_identity_store.dart';
 import 'src/utils.dart';
 
 /// MyAppCrew SDK entry point.
 class MyAppCrewFlutter {
-  static const String _sdkVersion = '0.1.9';
+  static const String _sdkVersion = '0.1.10';
   static const int _maxBatchSize = 50;
   static const String _defaultBaseUrl = 'https://myappcrew-tw.pages.dev';
   static const String _defaultIngestPath = '/api/v1/mobile/events/batch';
@@ -41,12 +43,14 @@ class MyAppCrewFlutter {
   static MyAppCrewLogger? _logger;
   static MyAppCrewClient? _client;
   static MyAppCrewStorage? _storage;
+  static TesterIdentityStore? _testerIdentityStore;
   static MyAppCrewQueue? _queue;
   static Timer? _flushTimer;
   static MyAppCrewLifecycleObserver? _lifecycleObserver;
 
   static String? _accessToken;
   static String? _testerId;
+  static TesterIdentity? _testerIdentity;
   static String? _sessionId;
   static String? _currentScreen;
   static String? _ingestUrl;
@@ -61,6 +65,7 @@ class MyAppCrewFlutter {
   static bool _disabledLogEmitted = false;
   static bool _debugLoggingEnabled = _defaultDebugLogging;
   static bool _clientInjectedForTesting = false;
+  static void Function(String reason)? _onTesterIdentityInvalid;
 
   static Map<String, dynamic> _appContext = <String, dynamic>{};
 
@@ -69,6 +74,58 @@ class MyAppCrewFlutter {
 
   /// Whether the SDK is enabled (publicKey present + bootstrap success).
   static bool get isEnabled => _isEnabled;
+
+  /// Whether a non-anonymous tester identity is connected.
+  static bool isTesterConnected() {
+    final testerId = _testerIdentity?.testerId ?? _testerId;
+    return testerId != null &&
+        testerId.isNotEmpty &&
+        !testerId.startsWith('tst_');
+  }
+
+  /// Returns the currently connected tester identity (without token).
+  static MyAppCrewTester? getConnectedTester() {
+    final identity = _testerIdentity;
+    if (_isTesterConnected(identity)) {
+      return MyAppCrewTester(
+        testerId: identity!.testerId,
+        connectedAt: _toDateTime(identity.connectedAtSeconds),
+      );
+    }
+    if (_testerId == null || _testerId!.isEmpty) {
+      return null;
+    }
+    if (_testerId!.startsWith('tst_')) {
+      return null;
+    }
+    return MyAppCrewTester(testerId: _testerId!);
+  }
+
+  /// Clears the connected tester identity and stored auth.
+  static Future<void> disconnectTester() async {
+    await _testerIdentityStore?.clearIdentity();
+    await _storage?.clearAuth();
+    _testerIdentity = null;
+    _testerId = null;
+    _accessToken = null;
+    _ingestUrl = null;
+    _isEnabled = false;
+    if (_config != null && _hasPublicKey) {
+      final ok = await _bootstrap();
+      _isEnabled = ok;
+    }
+  }
+
+  /// Connect using a 6-digit code.
+  static Future<MyAppCrewConnectResult> connectTester(String code) =>
+      connectFromText(code);
+
+  /// Set a callback for invalid/revoked tester identities.
+  static void setOnTesterIdentityInvalid(
+    void Function(String reason)? handler,
+  ) {
+    _onTesterIdentityInvalid = handler;
+  }
 
   /// Returns a safe snapshot of SDK state for debugging.
   static DebugSnapshot getDebugSnapshot() {
@@ -136,9 +193,11 @@ class MyAppCrewFlutter {
     _logger ??= MyAppCrewLogger(debugLogs);
     _client ??= MyAppCrewClient(timeout: _defaultTimeout, logger: _logger!);
     _storage ??= MyAppCrewStorage();
+    _testerIdentityStore ??= TesterIdentityStore();
     _queue ??= MyAppCrewQueue();
     _ensureSessionId();
     _appContext = await _loadAppContext();
+    await _loadTesterIdentity(trimmedKey);
 
     _isInitialized = false;
     _isEnabled = false;
@@ -146,6 +205,7 @@ class MyAppCrewFlutter {
 
     if (trimmedKey.isEmpty) {
       _accessToken = null;
+      _testerIdentity = null;
       _testerId = null;
       _ingestUrl = null;
       _lastError = 'missing_public_key';
@@ -159,11 +219,14 @@ class MyAppCrewFlutter {
     final persisted = await _storage?.loadAuth();
     if (!_config!.forceRebootstrap && _isAuthReusable(persisted)) {
       _accessToken = persisted?.accessToken;
-      _testerId = persisted?.testerId;
+      if (!_isTesterConnected(_testerIdentity)) {
+        _testerId = persisted?.testerId;
+      }
       _ingestUrl = persisted?.ingestUrl ?? _defaultIngestPath;
       _isInitialized = true;
       _isEnabled = true;
       _lastError = null;
+      _syncQueuedEventsWithTester();
       _startObservers();
       logEvent('app_open');
       _logger?.log('init ok (cached)');
@@ -396,6 +459,43 @@ class MyAppCrewFlutter {
     _sessionId ??= _uuid.v4();
   }
 
+  static bool _isTesterConnected(TesterIdentity? identity) {
+    return identity != null && identity.isConnected;
+  }
+
+  static Future<void> _loadTesterIdentity(String currentPublicKey) async {
+    if (currentPublicKey.isEmpty) {
+      _testerIdentity = null;
+      _testerId = null;
+      return;
+    }
+    final identity = await _testerIdentityStore?.getIdentity();
+    if (identity == null) {
+      return;
+    }
+    if (identity.appPublicKey != currentPublicKey) {
+      await _testerIdentityStore?.clearIdentity();
+      _testerIdentity = null;
+      _testerId = null;
+      return;
+    }
+    _testerIdentity = identity;
+    _testerId = identity.testerId;
+    if ((_accessToken == null || _accessToken!.isEmpty) &&
+        identity.sessionToken != null &&
+        identity.sessionToken!.isNotEmpty) {
+      _accessToken = identity.sessionToken;
+    }
+    _syncQueuedEventsWithTester();
+  }
+
+  static void _syncQueuedEventsWithTester() {
+    if (_testerId == null || _testerId!.isEmpty) {
+      return;
+    }
+    _queue?.attachTesterId(_testerId!);
+  }
+
   static void _applyDebugLogging(bool enabled) {
     _debugLoggingEnabled = enabled;
     _logger = MyAppCrewLogger(enabled);
@@ -450,6 +550,81 @@ class MyAppCrewFlutter {
     return auth.baseUrl == _config!.baseUrl &&
         auth.publicKey == _config!.publicKey &&
         auth.accessToken.isNotEmpty;
+  }
+
+  static bool _shouldInvalidateIdentity(MyAppCrewHttpResult result) {
+    final testerId = _testerIdentity?.testerId ?? _testerId;
+    if (testerId == null ||
+        testerId.isEmpty ||
+        testerId.startsWith('tst_')) {
+      return false;
+    }
+    if (result.statusCode == 401 || result.statusCode == 403) {
+      return true;
+    }
+    final errorText = _collectErrorText(result);
+    if (errorText.isEmpty) {
+      return false;
+    }
+    return _containsAny(errorText, <String>[
+      'revoked',
+      'invalid',
+      'expired',
+      'unknown tester',
+      'tester not found',
+      'token invalid',
+      'token expired',
+    ]);
+  }
+
+  static String _collectErrorText(MyAppCrewHttpResult result) {
+    final parts = <String>[];
+    final json = result.json;
+    if (json != null) {
+      for (final key in <String>[
+        'error',
+        'errorCode',
+        'code',
+        'message',
+        'detail',
+        'reason',
+      ]) {
+        final value = json[key];
+        if (value is String && value.isNotEmpty) {
+          parts.add(value);
+        }
+      }
+    }
+    if (result.rawBody != null && result.rawBody!.isNotEmpty) {
+      parts.add(result.rawBody!);
+    }
+    return parts.join(' ').toLowerCase();
+  }
+
+  static bool _containsAny(String haystack, List<String> needles) {
+    for (final needle in needles) {
+      if (haystack.contains(needle)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static Future<void> _invalidateTesterIdentity(String reason) async {
+    final testerId = _testerIdentity?.testerId ?? _testerId;
+    if (testerId == null ||
+        testerId.isEmpty ||
+        testerId.startsWith('tst_')) {
+      return;
+    }
+    _testerIdentity = null;
+    _testerId = null;
+    _accessToken = null;
+    _ingestUrl = null;
+    _isEnabled = false;
+    await _testerIdentityStore?.clearIdentity();
+    await _storage?.clearAuth();
+    _onTesterIdentityInvalid?.call(reason);
   }
 
   static Future<Map<String, dynamic>> _loadAppContext() async {
@@ -588,7 +763,9 @@ class MyAppCrewFlutter {
       }
 
       _accessToken = token;
-      _testerId = testerId;
+      if (!_isTesterConnected(_testerIdentity)) {
+        _testerId = testerId;
+      }
       _ingestUrl = ingestUrl ?? _defaultIngestPath;
       _lastBootstrapAt = unixSeconds();
       await _storage!.saveAuth(
@@ -601,6 +778,7 @@ class MyAppCrewFlutter {
           savedAtSeconds: unixSeconds(),
         ),
       );
+      _syncQueuedEventsWithTester();
 
       _logger?.log('bootstrap ok');
       _lastError = null;
@@ -650,6 +828,15 @@ class MyAppCrewFlutter {
     MyAppCrewHttpResult result,
     String inputKind,
   ) async {
+    if (_shouldInvalidateIdentity(result)) {
+      await _invalidateTesterIdentity('claim_unauthorized');
+      return MyAppCrewConnectResult(
+        connected: false,
+        inputKind: inputKind,
+        errorCode: 'claim_unauthorized',
+        message: 'Claim unauthorized',
+      );
+    }
     if (result.statusCode < 200 || result.statusCode >= 300) {
       _lastError = 'claim_failed_${result.statusCode}';
       _logger?.log('claim failed (${result.statusCode})');
@@ -690,6 +877,16 @@ class MyAppCrewFlutter {
     _accessToken = token;
     _testerId = testerId;
     _ingestUrl = ingestUrl ?? _defaultIngestPath;
+    final connectedAt = unixSeconds();
+    if (_config != null) {
+      _testerIdentity = TesterIdentity(
+        testerId: testerId,
+        appPublicKey: _config!.publicKey,
+        sessionToken: token,
+        connectedAtSeconds: connectedAt,
+      );
+      await _testerIdentityStore?.saveIdentity(_testerIdentity!);
+    }
     if (_storage != null && _config != null) {
       await _storage!.saveAuth(
         MyAppCrewAuth(
@@ -698,12 +895,13 @@ class MyAppCrewFlutter {
           accessToken: token,
           testerId: testerId,
           ingestUrl: _ingestUrl,
-          savedAtSeconds: unixSeconds(),
+          savedAtSeconds: connectedAt,
         ),
       );
     }
     _isEnabled = true;
     _lastError = null;
+    _syncQueuedEventsWithTester();
 
     if (_queue != null && _queue!.length > 0) {
       unawaited(flushNow());
@@ -753,6 +951,9 @@ class MyAppCrewFlutter {
     if (result == _SendResult.success) {
       return true;
     }
+    if (result == _SendResult.invalidIdentity) {
+      return _handleInvalidIdentity(batch);
+    }
     if (result == _SendResult.unauthorized) {
       return _handleUnauthorized(batch);
     }
@@ -763,12 +964,27 @@ class MyAppCrewFlutter {
       if (result == _SendResult.success) {
         return true;
       }
+      if (result == _SendResult.invalidIdentity) {
+        return _handleInvalidIdentity(batch);
+      }
       if (result == _SendResult.unauthorized) {
         return _handleUnauthorized(batch);
       }
     }
 
     return false;
+  }
+
+  static Future<bool> _handleInvalidIdentity(
+    List<Map<String, dynamic>> batch,
+  ) async {
+    await _invalidateTesterIdentity('events_unauthorized');
+    final ok = await _bootstrap();
+    if (!ok) {
+      return false;
+    }
+    final retry = await _postBatch(batch);
+    return retry == _SendResult.success;
   }
 
   static Future<bool> _handleUnauthorized(
@@ -800,6 +1016,9 @@ class MyAppCrewFlutter {
         <String, dynamic>{'events': batch},
         headers: <String, String>{'Authorization': 'Bearer $_accessToken'},
       );
+      if (_shouldInvalidateIdentity(result)) {
+        return _SendResult.invalidIdentity;
+      }
       if (result.statusCode == 401) {
         return _SendResult.unauthorized;
       }
@@ -831,12 +1050,14 @@ class MyAppCrewFlutter {
     _logger = null;
     _client = null;
     _storage = null;
+    _testerIdentityStore = null;
     _queue = null;
     _flushTimer?.cancel();
     _flushTimer = null;
     _lifecycleObserver = null;
     _accessToken = null;
     _testerId = null;
+    _testerIdentity = null;
     _sessionId = null;
     _currentScreen = null;
     _ingestUrl = null;
@@ -851,6 +1072,7 @@ class MyAppCrewFlutter {
     _disabledLogEmitted = false;
     _debugLoggingEnabled = _defaultDebugLogging;
     _clientInjectedForTesting = false;
+    _onTesterIdentityInvalid = null;
     _appContext = <String, dynamic>{};
   }
 }
@@ -881,6 +1103,9 @@ class MyAppCrew {
 
   static bool get isInitialized => MyAppCrewFlutter.isInitialized;
   static bool get isEnabled => MyAppCrewFlutter.isEnabled;
+  static bool isTesterConnected() => MyAppCrewFlutter.isTesterConnected();
+  static MyAppCrewTester? getConnectedTester() =>
+      MyAppCrewFlutter.getConnectedTester();
   static DebugSnapshot getDebugSnapshot() =>
       MyAppCrewFlutter.getDebugSnapshot();
 
@@ -904,6 +1129,14 @@ class MyAppCrew {
         input,
         publicKeyOverride: publicKeyOverride,
       );
+  static Future<MyAppCrewConnectResult> connectTester(String code) =>
+      MyAppCrewFlutter.connectTester(code);
+  static Future<void> disconnectTester() =>
+      MyAppCrewFlutter.disconnectTester();
+  static void setOnTesterIdentityInvalid(
+    void Function(String reason)? handler,
+  ) =>
+      MyAppCrewFlutter.setOnTesterIdentityInvalid(handler);
   static Future<void> showConnectSheet(
     BuildContext context, {
     bool showAsBottomSheet = true,
@@ -922,4 +1155,4 @@ class MyAppCrew {
       MyAppCrewFlutter.setDebugLogging(enabled);
 }
 
-enum _SendResult { success, failed, unauthorized }
+enum _SendResult { success, failed, unauthorized, invalidIdentity }

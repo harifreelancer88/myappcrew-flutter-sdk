@@ -55,6 +55,18 @@ class MyAppCrewConnectResult {
   final String? message;
 }
 
+class MyAppCrewTester {
+  const MyAppCrewTester({
+    required this.testerId,
+    this.connectedAt,
+    this.nickname,
+  });
+
+  final String testerId;
+  final DateTime? connectedAt;
+  final String? nickname;
+}
+
 class DebugSnapshot {
   const DebugSnapshot({
     required this.initialized,

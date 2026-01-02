@@ -9,6 +9,15 @@ class MyAppCrewQueue {
     _events.add(event);
   }
 
+  void attachTesterId(String testerId) {
+    if (testerId.isEmpty) {
+      return;
+    }
+    for (final event in _events) {
+      event.putIfAbsent('testerId', () => testerId);
+    }
+  }
+
   List<Map<String, dynamic>> snapshot(int maxCount) {
     if (_events.isEmpty) {
       return <Map<String, dynamic>>[];
