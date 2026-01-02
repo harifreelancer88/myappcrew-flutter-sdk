@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.8
+- Fix connect prompt keyboard overlap and remove submit error flash.
+
 ## 0.1.7
 - Add debug-only connect prompt overlay widget.
 

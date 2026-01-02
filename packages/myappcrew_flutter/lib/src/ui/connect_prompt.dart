@@ -7,6 +7,9 @@ import 'package:flutter/services.dart';
 import '../../myappcrew_flutter.dart';
 
 typedef ConnectPromptSnapshotProvider = Future<DebugSnapshot> Function();
+typedef ConnectPromptConnectHandler = Future<MyAppCrewConnectResult> Function(
+  String input,
+);
 
 class MyAppCrewConnectPrompt extends StatefulWidget {
   const MyAppCrewConnectPrompt({
@@ -22,6 +25,8 @@ class MyAppCrewConnectPrompt extends StatefulWidget {
 
   @visibleForTesting
   static ConnectPromptSnapshotProvider? debugSnapshotProviderForTesting;
+  @visibleForTesting
+  static ConnectPromptConnectHandler? debugConnectHandlerForTesting;
 
   @override
   State<MyAppCrewConnectPrompt> createState() => _MyAppCrewConnectPromptState();
@@ -32,11 +37,12 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
   static const Duration _connectedBannerDuration = Duration(seconds: 2);
 
   final TextEditingController _controller = TextEditingController();
+  final FocusNode _codeFocusNode = FocusNode();
   Timer? _pollTimer;
   Timer? _connectedBannerTimer;
   DebugSnapshot? _snapshot;
   bool _submitting = false;
-  String? _errorMessage;
+  String? _errorText;
   bool _showConnectedBanner = false;
   bool _connectedBannerDismissed = false;
   bool _promptDismissed = false;
@@ -54,6 +60,7 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
     _pollTimer?.cancel();
     _connectedBannerTimer?.cancel();
     _controller.dispose();
+    _codeFocusNode.dispose();
     super.dispose();
   }
 
@@ -82,6 +89,9 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
 
   bool get _shouldPoll {
     if (!_debugEnabled) {
+      return false;
+    }
+    if (_submitting) {
       return false;
     }
     if (_promptDismissed && !widget.showUntilConnected) {
@@ -114,6 +124,14 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
       return provider();
     }
     return Future<DebugSnapshot>.value(MyAppCrewFlutter.getDebugSnapshot());
+  }
+
+  Future<MyAppCrewConnectResult> _connectFromText(String input) async {
+    final handler = MyAppCrewConnectPrompt.debugConnectHandlerForTesting;
+    if (handler != null) {
+      return handler(input);
+    }
+    return MyAppCrewFlutter.connectFromText(input);
   }
 
   Future<void> _refreshSnapshot() async {
@@ -154,34 +172,55 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
   }
 
   Future<void> _handleConnect() async {
+    if (_submitting) {
+      return;
+    }
     final rawInput = _controller.text.trim();
-    if (rawInput.isEmpty || _submitting) {
+    final normalized = rawInput.replaceAll(RegExp(r'\D'), '');
+    if (normalized.length != 6) {
       setState(() {
-        _errorMessage = 'Enter your 6-digit Connect Code.';
+        _errorText = 'Enter your 6-digit Connect Code.';
       });
       return;
     }
 
     setState(() {
       _submitting = true;
-      _errorMessage = null;
+      _errorText = null;
     });
+    _pollTimer?.cancel();
+    _pollTimer = null;
 
-    final result = await MyAppCrewFlutter.connectFromText(rawInput);
-    if (!mounted) {
-      return;
+    try {
+      final result = await _connectFromText(normalized);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _submitting = false;
+        if (!result.connected) {
+          _errorText = result.message ??
+              result.errorCode ??
+              'Connection failed. Try again.';
+        }
+      });
+      if (result.connected) {
+        FocusScope.of(context).unfocus();
+      }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _submitting = false;
+        _errorText = 'Connection failed. Try again.';
+      });
     }
 
-    setState(() {
-      _submitting = false;
-      if (!result.connected) {
-        _errorMessage = result.message ??
-            result.errorCode ??
-            'Connection failed. Try again.';
-      }
-    });
-
-    unawaited(_refreshSnapshot());
+    if (mounted) {
+      unawaited(_refreshSnapshot());
+      _ensurePolling();
+    }
   }
 
   void _dismissConnectedBanner() {
@@ -220,21 +259,33 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
           left: 0,
           right: 0,
           bottom: 0,
-          child: SafeArea(
-            minimum: const EdgeInsets.all(12),
-            child: Align(
-              alignment: Alignment.bottomCenter,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 520),
-                child: Material(
-                  elevation: 6,
-                  color: theme.colorScheme.surface,
-                  borderRadius: BorderRadius.circular(12),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: shouldShowConnected
-                        ? _buildConnectedBanner(theme)
-                        : _buildPrompt(theme),
+          child: AnimatedPadding(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom,
+            ),
+            child: SafeArea(
+              top: false,
+              minimum: const EdgeInsets.all(12),
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 520),
+                  child: Material(
+                    elevation: 6,
+                    color: theme.colorScheme.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    child: SingleChildScrollView(
+                      physics: const ClampingScrollPhysics(),
+                      reverse: true,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: shouldShowConnected
+                            ? _buildConnectedBanner(theme)
+                            : _buildPrompt(theme),
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -263,7 +314,7 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
   }
 
   Widget _buildPrompt(ThemeData theme) {
-    final errorMessage = _errorMessage;
+    final errorMessage = _errorText;
     final labelStyle =
         theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error);
 
@@ -280,19 +331,23 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
         const SizedBox(height: 12),
         TextField(
           controller: _controller,
+          focusNode: _codeFocusNode,
           enabled: !_submitting,
           keyboardType: TextInputType.number,
           inputFormatters: <TextInputFormatter>[
-            FilteringTextInputFormatter.allow(RegExp(r'[\d\s]')),
+            _ConnectCodeFormatter(),
           ],
           decoration: const InputDecoration(
             labelText: '6-digit code',
             border: OutlineInputBorder(),
           ),
+          onTap: () {
+            _codeFocusNode.requestFocus();
+          },
           onChanged: (_) {
-            if (_errorMessage != null) {
+            if (_errorText != null) {
               setState(() {
-                _errorMessage = null;
+                _errorText = null;
               });
             }
           },
@@ -327,6 +382,31 @@ class _MyAppCrewConnectPromptState extends State<MyAppCrewConnectPrompt> {
           Text(errorMessage, style: labelStyle),
         ],
       ],
+    );
+  }
+}
+
+class _ConnectCodeFormatter extends TextInputFormatter {
+  static final RegExp _digitMatcher = RegExp(r'\D');
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll(_digitMatcher, '');
+    final clipped = digits.length > 6 ? digits.substring(0, 6) : digits;
+    final buffer = StringBuffer();
+    for (var i = 0; i < clipped.length; i += 1) {
+      if (i == 3) {
+        buffer.write(' ');
+      }
+      buffer.write(clipped[i]);
+    }
+    final formatted = buffer.toString();
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
     );
   }
 }

@@ -7,6 +7,7 @@ void main() {
 
   tearDown(() {
     MyAppCrewConnectPrompt.debugSnapshotProviderForTesting = null;
+    MyAppCrewConnectPrompt.debugConnectHandlerForTesting = null;
   });
 
   testWidgets('prompt renders when disconnected', (tester) async {
@@ -45,6 +46,59 @@ void main() {
     await tester.pump(const Duration(milliseconds: 10));
 
     expect(find.text('Connect tester'), findsNothing);
+  });
+
+  testWidgets('submitting code does not throw', (tester) async {
+    MyAppCrewConnectPrompt.debugSnapshotProviderForTesting =
+        _disconnectedSnapshot;
+    MyAppCrewConnectPrompt.debugConnectHandlerForTesting =
+        (_) => Future<MyAppCrewConnectResult>.error(Exception('boom'));
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: MyAppCrewConnectPrompt(
+            child: Text('home'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump(const Duration(milliseconds: 10));
+    await tester.enterText(find.byType(TextField), '123456');
+    await tester.ensureVisible(find.text('Connect'));
+    await tester.tap(find.text('Connect'), warnIfMissed: false);
+    await tester.pump(const Duration(milliseconds: 10));
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('prompt stays above keyboard', (tester) async {
+    MyAppCrewConnectPrompt.debugSnapshotProviderForTesting =
+        _disconnectedSnapshot;
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 200);
+    addTearDown(tester.view.resetViewInsets);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: MyAppCrewConnectPrompt(
+            child: Text('home'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump(const Duration(milliseconds: 200));
+
+    final buttonFinder = find.widgetWithText(ElevatedButton, 'Connect');
+    final buttonRect = tester.getRect(buttonFinder);
+    final logicalHeight =
+        tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    final bottomInset = tester.view.viewInsets.bottom;
+
+    expect(buttonRect.bottom, lessThanOrEqualTo(logicalHeight - bottomInset));
   });
 }
 
