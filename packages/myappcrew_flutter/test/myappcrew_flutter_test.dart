@@ -78,7 +78,7 @@ void main() {
       responses: <_FakeResponse>[
         const _FakeResponse(200, <String, dynamic>{
           'accessToken': 'eyJ_token_bootstrap',
-          'testerId': 'tester_bootstrap',
+          'testerId': 'tst_bootstrap',
           'ingestUrl': '/api/v1/mobile/events/batch',
         }),
       ],
@@ -109,7 +109,7 @@ void main() {
       responses: <_FakeResponse>[
         const _FakeResponse(200, <String, dynamic>{
           'accessToken': 'token_bootstrap',
-          'testerId': 'tester_bootstrap',
+          'testerId': 'tst_bootstrap',
           'ingestUrl': '/api/v1/mobile/events/batch',
         }),
         const _FakeResponse(200, <String, dynamic>{
@@ -161,7 +161,7 @@ void main() {
       responses: <_FakeResponse>[
         const _FakeResponse(200, <String, dynamic>{
           'accessToken': 'token_bootstrap',
-          'testerId': 'tester_bootstrap',
+          'testerId': 'tst_bootstrap',
           'ingestUrl': '/api/v1/mobile/events/batch',
         }),
       ],
@@ -209,7 +209,7 @@ void main() {
       responses: <_FakeResponse>[
         const _FakeResponse(200, <String, dynamic>{
           'accessToken': 'token_bootstrap',
-          'testerId': 'tester_bootstrap',
+          'testerId': 'tst_bootstrap',
           'ingestUrl': '/api/v1/mobile/events/batch',
         }),
         const _FakeResponse(200, <String, dynamic>{
@@ -241,7 +241,7 @@ void main() {
       responses: <_FakeResponse>[
         const _FakeResponse(200, <String, dynamic>{
           'accessToken': 'token_bootstrap',
-          'testerId': 'tester_bootstrap',
+          'testerId': 'tst_bootstrap',
           'ingestUrl': '/api/v1/mobile/events/batch',
         }),
         const _FakeResponse(200, <String, dynamic>{
@@ -272,13 +272,13 @@ void main() {
       responses: <_FakeResponse>[
         const _FakeResponse(200, <String, dynamic>{
           'accessToken': 'token_bootstrap_1',
-          'testerId': 'tester_bootstrap_1',
+          'testerId': 'tst_bootstrap_1',
           'ingestUrl': '/api/v1/mobile/events/batch',
         }),
         const _FakeResponse(401, <String, dynamic>{}),
         const _FakeResponse(200, <String, dynamic>{
           'accessToken': 'token_bootstrap_2',
-          'testerId': 'tester_bootstrap_2',
+          'testerId': 'tst_bootstrap_2',
           'ingestUrl': '/api/v1/mobile/events/batch',
         }),
         const _FakeResponse(200, <String, dynamic>{
@@ -308,5 +308,153 @@ void main() {
     expect(result.connected, isTrue);
     expect(bootstrapCalls, 2);
     expect(claimCalls, 2);
+  });
+
+  test('init uses connected identity for recovery before bootstrap', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'myappcrew_connected_tester_id': 'tester_connected',
+      'myappcrew_connected_public_key': 'pk_test',
+      'myappcrew_connected_session_token': 'token_old',
+      'myappcrew_connected_at': 123,
+    });
+
+    final fake = _FakeClient(
+      responses: <_FakeResponse>[
+        const _FakeResponse(500, <String, dynamic>{}),
+        const _FakeResponse(200, <String, dynamic>{
+          'accessToken': 'token_recovered',
+          'testerId': 'tester_connected',
+          'ingestUrl': '/api/v1/mobile/events/batch',
+        }),
+      ],
+    );
+    MyAppCrewFlutter.setClientForTesting(fake);
+
+    await MyAppCrewFlutter.init(
+      publicKey: 'pk_test',
+      baseUrl: 'https://example.com',
+      enableLogs: false,
+    );
+
+    final bootstrapPayloads = fake.payloads
+        .where((payload) => payload.containsKey('publicKey'))
+        .toList();
+    expect(bootstrapPayloads.length, 1);
+    expect(bootstrapPayloads.first['testerId'], 'tester_connected');
+    expect(MyAppCrewFlutter.isTesterConnected(), isTrue);
+  });
+
+  test('unauthorized does not clear identity and keeps queue', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'myappcrew_connected_tester_id': 'tester_connected',
+      'myappcrew_connected_public_key': 'pk_test',
+      'myappcrew_connected_session_token': 'token_old',
+      'myappcrew_connected_at': 123,
+      'myappcrew_base_url': 'https://example.com',
+      'myappcrew_public_key': 'pk_test',
+      'myappcrew_access_token': 'token_old',
+      'myappcrew_tester_id': 'tester_connected',
+      'myappcrew_ingest_url': '/api/v1/mobile/events/batch',
+      'myappcrew_saved_at': 123,
+    });
+
+    final fake = _FakeClient(
+      responses: <_FakeResponse>[
+        const _FakeResponse(401, <String, dynamic>{}),
+        const _FakeResponse(500, <String, dynamic>{}),
+        const _FakeResponse(500, <String, dynamic>{}),
+      ],
+    );
+    MyAppCrewFlutter.setClientForTesting(fake);
+
+    await MyAppCrewFlutter.init(
+      publicKey: 'pk_test',
+      baseUrl: 'https://example.com',
+      enableLogs: false,
+    );
+    MyAppCrewFlutter.logEvent('test_event');
+    await MyAppCrewFlutter.flushNow();
+
+    final snapshot = MyAppCrewFlutter.getDebugSnapshot();
+    expect(snapshot.queuedEventsCount, 2);
+    expect(MyAppCrewFlutter.isTesterConnected(), isTrue);
+    expect(MyAppCrewFlutter.getConnectedTester()?.testerId, 'tester_connected');
+  });
+
+  test('revoked tester clears identity and calls callback', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'myappcrew_connected_tester_id': 'tester_connected',
+      'myappcrew_connected_public_key': 'pk_test',
+      'myappcrew_connected_session_token': 'token_old',
+      'myappcrew_connected_at': 123,
+      'myappcrew_base_url': 'https://example.com',
+      'myappcrew_public_key': 'pk_test',
+      'myappcrew_access_token': 'token_old',
+      'myappcrew_tester_id': 'tester_connected',
+      'myappcrew_ingest_url': '/api/v1/mobile/events/batch',
+      'myappcrew_saved_at': 123,
+    });
+
+    final fake = _FakeClient(
+      responses: <_FakeResponse>[
+        const _FakeResponse(403, <String, dynamic>{
+          'code': 'REVOKED_TESTER',
+        }),
+      ],
+    );
+    MyAppCrewFlutter.setClientForTesting(fake);
+
+    String? invalidReason;
+    MyAppCrewFlutter.setOnTesterIdentityInvalid((reason) {
+      invalidReason = reason;
+    });
+
+    await MyAppCrewFlutter.init(
+      publicKey: 'pk_test',
+      baseUrl: 'https://example.com',
+      enableLogs: false,
+    );
+    MyAppCrewFlutter.logEvent('test_event');
+    await MyAppCrewFlutter.flushNow();
+
+    expect(invalidReason, isNotNull);
+    expect(MyAppCrewFlutter.isTesterConnected(), isFalse);
+    expect(MyAppCrewFlutter.getConnectedTester(), isNull);
+  });
+
+  test('queued events use connected testerId after init', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'myappcrew_connected_tester_id': 'tester_connected',
+      'myappcrew_connected_public_key': 'pk_test',
+      'myappcrew_connected_session_token': 'token_old',
+      'myappcrew_connected_at': 123,
+      'myappcrew_base_url': 'https://example.com',
+      'myappcrew_public_key': 'pk_test',
+      'myappcrew_access_token': 'token_old',
+      'myappcrew_tester_id': 'tester_connected',
+      'myappcrew_ingest_url': '/api/v1/mobile/events/batch',
+      'myappcrew_saved_at': 123,
+    });
+
+    final fake = _FakeClient(
+      responses: <_FakeResponse>[
+        const _FakeResponse(200, <String, dynamic>{}),
+      ],
+    );
+    MyAppCrewFlutter.setClientForTesting(fake);
+
+    MyAppCrewFlutter.logEvent('pre_init');
+    await MyAppCrewFlutter.init(
+      publicKey: 'pk_test',
+      baseUrl: 'https://example.com',
+      enableLogs: false,
+    );
+    await MyAppCrewFlutter.flushNow();
+
+    final payload = fake.payloads
+        .firstWhere((item) => item.containsKey('events'));
+    final events = payload['events'] as List<dynamic>;
+    final testerId = (events.first as Map<String, dynamic>)['testerId'];
+    expect(testerId, 'tester_connected');
   });
 }

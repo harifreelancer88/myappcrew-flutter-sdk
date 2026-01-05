@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.11
+- Fix: prevent tester identity from resetting or switching to `tst_*` after token expiry.
+- Keep connected testers sticky and recover auth silently without prompting.
+
 ## 0.1.10
 - Persist connected tester identity across app restarts and attach it to events.
 - Add invalid identity handling with a reconnect callback.

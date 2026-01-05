@@ -15,6 +15,7 @@ void main() {
       testerId: 'tester_123',
       appPublicKey: 'pk_test',
       sessionToken: 'token_abc',
+      refreshToken: 'refresh_abc',
       connectedAtSeconds: 123,
     );
 
@@ -24,6 +25,7 @@ void main() {
     expect(loaded?.testerId, identity.testerId);
     expect(loaded?.appPublicKey, identity.appPublicKey);
     expect(loaded?.sessionToken, identity.sessionToken);
+    expect(loaded?.refreshToken, identity.refreshToken);
     expect(loaded?.connectedAtSeconds, identity.connectedAtSeconds);
 
     await store.clearIdentity();

@@ -18,6 +18,15 @@ class MyAppCrewQueue {
     }
   }
 
+  void forceTesterId(String testerId) {
+    if (testerId.isEmpty) {
+      return;
+    }
+    for (final event in _events) {
+      event['testerId'] = testerId;
+    }
+  }
+
   List<Map<String, dynamic>> snapshot(int maxCount) {
     if (_events.isEmpty) {
       return <Map<String, dynamic>>[];

@@ -60,8 +60,11 @@ ElevatedButton(
 ## Tester identity persistence
 
 After a successful connect, the SDK stores the tester identity and reuses it on
-app relaunches for the same public key. If the identity is revoked or invalid,
-it is cleared and you can prompt the tester to reconnect.
+app relaunches for the same public key. Connected identities persist across
+restarts; only uninstalling the app or clearing storage resets them. If the
+backend invalidates a token temporarily, the SDK retries silently and keeps
+events queued without prompting. Only explicit revocations clear the identity
+and require a reconnect prompt.
 
 ```dart
 MyAppCrewFlutter.setOnTesterIdentityInvalid((reason) {
